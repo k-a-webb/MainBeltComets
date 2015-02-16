@@ -25,14 +25,14 @@ def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', ra
     else:    
         asteroid_list = find_family_members(familyname)
 
-    '''image_list_path = 'asteroid_families/{}/{}_images.txt'.format(familyname, familyname)  
+    image_list_path = 'asteroid_families/{}/{}_images.txt'.format(familyname, familyname)  
     if  os.path.exists(image_list_path):
         print "----- List of images in family {} exists already -----".format(familyname)
         with open(image_list_path) as infile:
             filestr = infile.read()
             image_list = filestr.split('\n')
-    else:'''    
-    image_list = get_image_info(familyname, filtertype, imagetype)       
+    else:  
+        image_list = get_image_info(familyname, filtertype, imagetype)       
     
     if objectname == None:
         objectname = image_list[0]
