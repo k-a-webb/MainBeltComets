@@ -8,32 +8,6 @@ import requests
 
 from ossos_scripts.ssos import Query
 
-def main():
-    '''
-    Input asteroid family, filter type, and image type to query SSOIS
-    '''
-    
-    parser = argparse.ArgumentParser(description='Run SSOIS and return the available images in a particular filter.')
-
-    parser.add_argument("--filter", "-f",
-                    action="store",
-                    default='r',
-                    dest="filter",
-                    choices=['r', 'u'],
-                    help="passband: default is r'")
-    parser.add_argument("--family",
-                        action="store",
-                        default="testfamily/testfamily_family.txt",
-                        help='list of objects to query')
-    parser.add_argument('--type',
-                        default='p',
-                        choices=['o', 'p', 's'], 
-                        help="restrict type of image (unprocessed, reduced, calibrated)")
-
-    args = parser.parse_args()
-    
-    get_image_info(args.family, args.filter, args.type)
-
 def get_image_info(familyname, filtertype='r', imagetype='p'):
     '''
     Query the ssois ephemeris for images of objects in a given family. Then parse through for desired image type, 
@@ -64,7 +38,7 @@ def get_image_info(familyname, filtertype='r', imagetype='p'):
     search_end_date=Time('2017-01-01', scale='utc')     # epoch2=2017+1+1
         
     # Setup output, label columns
-    with open('{}/{}_images4.txt'.format(family_dir, familyname), 'w') as outfile:
+    with open('{}/{}_images.txt'.format(family_dir, familyname), 'w') as outfile:
         outfile.write("{:>10s} {:>10s} {:>10s} {:>16s} {:>16s} {:>16s} {:>12s}\n".format(
             "Object", "Image", "Exp_time", "RA", "DEC", "time", "filter"))
 
@@ -77,7 +51,7 @@ def get_image_info(familyname, filtertype='r', imagetype='p'):
     print " with filter {} and exposure time of 287, 387, 500 seconds (OSSOS data) \n--------------------".format(filtertype)
         
     image_list = []
-    for object_name in object_list[2171:len(object_list)-1]:
+    for object_name in object_list[:len(object_list)-1]:
         query = Query(object_name, search_start_date=search_start_date, search_end_date=search_end_date)
 
         # GET/REVIEW THE DATA RETURNED FROM THE SEARCH
@@ -87,7 +61,7 @@ def get_image_info(familyname, filtertype='r', imagetype='p'):
 
         # output the data is previously initiated output file
         if len(obs_in_filter) > 0:
-            with open('{}/{}_images4.txt'.format(family_dir, familyname), 'a') as outfile:
+            with open('{}/{}_images.txt'.format(family_dir, familyname), 'a') as outfile:
                 for line in obs_in_filter:
                     image_list.append(object_name)
                     try:
@@ -109,7 +83,7 @@ def parse_ssois_return(ssois_return, object_name, imagetype, camera_filter='r.MP
     bad_table = 0
 
     table_reader = ascii.get_reader(Reader=ascii.Basic)
-    #table_reader.inconsistent_handler = _skip_missing_data
+    table_reader.inconsistent_handler = _skip_missing_data
     table_reader.header.splitter.delimiter = '\t'
     table_reader.data.splitter.delimiter = '\t'
     table = table_reader.read(ssois_return)
@@ -152,9 +126,35 @@ def _skip_missing_data(str_vals, ncols):
         str_vals.append('None')
         return str_vals
     else:
-        raise ValueError("not enough columns in table")
-        # object U0233 does not have enough columns in table
+        #raise ValueError("not enough columns in table")
+        print '  Not enough columns in data table'
     
+def main():
+    '''
+    Input asteroid family, filter type, and image type to query SSOIS
+    '''
+    
+    parser = argparse.ArgumentParser(description='Run SSOIS and return the available images in a particular filter.')
+
+    parser.add_argument("--filter",
+                    action="store",
+                    default='r',
+                    dest="filter",
+                    choices=['r', 'u'],
+                    help="passband: default is r'")
+    parser.add_argument("--family", '-f',
+                        action="store",
+                        default="testfamily/testfamily_family.txt",
+                        help='list of objects to query')
+    parser.add_argument('--type',
+                        default='p',
+                        choices=['o', 'p', 's'], 
+                        help="restrict type of image (unprocessed, reduced, calibrated)")
+
+    args = parser.parse_args()
+    
+    get_image_info(args.family, args.filter, args.type)
+
 
 if __name__ == '__main__':
     main()
