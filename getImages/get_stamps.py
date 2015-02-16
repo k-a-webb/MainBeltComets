@@ -98,16 +98,24 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname, v
                   "DIRECTION": direction,
                   "cutout": this_cutout,
                   "view": view}
-    r = requests.get(BASEURL, params=params, auth=(username, password))
-    r.raise_for_status()  # confirm the connection worked as hoped
-    postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, image, RA, DEC)
     
-    with open('{}/{}'.format(output_dir, postage_stamp_filename), 'w') as tmp_file:
-        object_dir = 'asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, postage_stamp_filename)
-        assert os.path.exists(object_dir)
-        tmp_file.write(r.content)
-        storage.copy(object_dir, '{}/{}'.format(vos_dir, postage_stamp_filename))
-    os.unlink(object_dir)  # easier not to have them hanging around
+    try:
+        r = requests.get(BASEURL, params=params, auth=(username, password))
+        
+        postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, image, RA, DEC)
+    
+        with open('{}/{}'.format(output_dir, postage_stamp_filename), 'w') as tmp_file:
+            object_dir = 'asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, postage_stamp_filename)
+            assert os.path.exists(object_dir)
+            tmp_file.write(r.content)
+            storage.copy(object_dir, '{}/{}'.format(vos_dir, postage_stamp_filename))
+        os.unlink(object_dir)  # easier not to have them hanging around
+        
+    except requests.exceptions.ConnectionError as e:
+        print "These aren't the domains we're looking for."
+    
+    #r = requests.get(BASEURL, params=params, auth=(username, password))
+    #r.raise_for_status()  # confirm the connection worked as hoped
     
     
 def main():
