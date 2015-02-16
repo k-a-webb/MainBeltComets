@@ -59,14 +59,14 @@ def get_stamps(familyname, radius):
             RA = float(line.split()[3])   
             DEC = float(line.split()[4])
             
-            obj_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
-            if not storage.exists(obj_dir, force=True):
-                storage.mkdir(obj_dir)
-            #assert storage.exists(obj_dir, force=True)
+            vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
+            if not storage.exists(vos_dir, force=True):
+                storage.mkdir(vos_dir)
+            #assert storage.exists(vos_dir, force=True)
 
-            cutout(objectname, expnum, RA, DEC, radius, username, password, familyname, obj_dir)
+            cutout(objectname, expnum, RA, DEC, radius, username, password, familyname, vos_dir)
 	
-def cutout(objectname, image, RA, DEC, radius, username, password, familyname, obj_dir):
+def cutout(objectname, image, RA, DEC, radius, username, password, familyname, vos_dir):
     # CUT OUT (image, RA, DEC, radius, CADC permissions)
 	# for each attribute in mpc_observations:
 		# storage.vospace.fixURI and 
@@ -106,8 +106,8 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname, o
         object_dir = 'asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, postage_stamp_filename)
         assert os.path.exists(object_dir)
         tmp_file.write(r.content)
-        storage.copy(object_dir, '{}/{}'.format(obj_dir, postage_stamp_filename))
-    #os.unlink(object_dir)  # easier not to have them hanging around
+        storage.copy(object_dir, '{}/{}'.format(vos_dir, postage_stamp_filename))
+    os.unlink(object_dir)  # easier not to have them hanging around
     
     
 def main():
