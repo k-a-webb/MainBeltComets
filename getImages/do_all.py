@@ -1,5 +1,6 @@
 import argparse
 import os
+import getpass
 
 from find_family import find_family_members
 from find_family import get_all_families_list
@@ -14,7 +15,7 @@ import ossos_scripts.util
 
 
 
-def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', radius=0.005, aperture=10.0, thresh=5.0):
+def do_all_things(username, password, familyname, objectname=None, filtertype='r', imagetype='p', radius=0.005, aperture=10.0, thresh=5.0):
    
     family_list_path = 'asteroid_families/{}/{}_family.txt'.format(familyname, familyname)
     if  os.path.exists(family_list_path):
@@ -41,7 +42,7 @@ def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', ra
     if os.path.exists(stamps_dir):
         print '----- Stamps already exist in VOSpace -----'
     else:
-        get_stamps(familyname, radius)
+        get_stamps(familyname, radius, username, password)
                 
     #find_objects_by_phot(familyname, objectname, aperture, thresh)    
               
@@ -90,6 +91,10 @@ def main():
                             
     args = parser.parse_args()
     
+    # CADC PERMISSIONS
+    username = raw_input("CADC username: ")
+    password = getpass.getpass("CADC password: ")
+    
     allfamily_list_path = 'asteroid_families/all_families.txt'
     if args.family == None: 
         if os.path.exists(allfamily_list_path):
@@ -100,11 +105,11 @@ def main():
         else:    
             families_list = get_all_families_list()
     
-        for familyname in families_list:
-            do_all_things(familyname, args.object, args.filter, args.type, args.radius, args.aperture, args.thresh)
+        for familyname in families_list[32:]:
+            do_all_things(username, password, familyname, args.object, args.filter, args.type, args.radius, args.aperture, args.thresh)
     
     else:
-        do_all_things(args.family, args.object, args.filter, args.type, args.radius, args.aperture, args.thresh)
+        do_all_things(username, password, args.family, args.object, args.filter, args.type, args.radius, args.aperture, args.thresh)
                         
 if __name__ == '__main__':
     main()                        
