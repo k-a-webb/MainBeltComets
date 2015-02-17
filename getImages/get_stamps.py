@@ -31,13 +31,9 @@ BASEURL = "http://www.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/vospace/auth/synctrans"
 
 
     
-def get_stamps(familyname, radius):
+def get_stamps(familyname, radius, username, password):
     
     print "----- Cutting postage stamps of objects in family {}  from CFHT/MegaCam images -----".format(familyname)	
-
-    # CADC PERMISSIONS
-    username = raw_input("CADC username: ")
-    password = getpass.getpass("CADC password: ")
 
     # PARSE THROUGH INPUT FILE FOR IMAGE INFORMATION
         # format into lines, parse for image, RA and DEC
@@ -143,7 +139,11 @@ def main():
     
     args = parser.parse_args()
     
-    get_stamps(args.family, args.radius)
+    # CADC PERMISSIONS
+    username = raw_input("CADC username: ")
+    password = getpass.getpass("CADC password: ")
+    
+    get_stamps(args.family, args.radius, username, password)
 		
 if __name__ == '__main__':
     main()	
