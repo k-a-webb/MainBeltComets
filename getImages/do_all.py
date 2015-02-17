@@ -34,10 +34,14 @@ def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', ra
     else:  
         image_list = get_image_info(familyname, filtertype, imagetype)       
     
-    if objectname == None:
-        objectname = image_list[0]
+    #if objectname == None:
+    #    objectname = image_list[0]
 
-    get_stamps(familyname, radius)
+    stamps_dir = 'asteroid_families/{}/{}_stamps'.format(familyname, familyname)
+    if os.path.exists(stamps_dir):
+        print '----- Stamps already exist in VOSpace -----'
+    else:
+        get_stamps(familyname, radius)
                 
     #find_objects_by_phot(familyname, objectname, aperture, thresh)    
               
