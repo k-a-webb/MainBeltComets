@@ -9,11 +9,11 @@ def main():
 def find_mbas(output=None):    
     '''
     Queries the AstDys database for members of the main asteroid belt
-    2.064 AU < a < 3.277 AU, e < 0.45, i < 40 deg
+    2.064 AU < a < 3.277 AU, e < 0.45, i < 40 deg, sini < 0.642 
     '''
     
     if output == None:
-        output = 'mba_list.txt'
+        output = 'mba_wofam_list.txt'
         
     output_dir = '/Users/admin/Desktop/MainBeltComets/getImages/mba'
     
@@ -30,7 +30,7 @@ def find_mbas(output=None):
     mba_list = []
     mba_wofam_list = []
     
-    with open('mba/mba_wofam_list.txt') as infile:
+    with open('mba/wo_fam_list.txt') as infile:
         for line in infile:
             mba_wofam_list.append(line)
             
@@ -40,9 +40,10 @@ def find_mbas(output=None):
             mba_name = line.split()[0]
             mba_a = float(line.split()[2])
             mba_e = float(line.split()[3])
+            mba_i = float(line.split()[4])
         
             for item in mba_wofam_list:
-                if (item == mba_name) & (mba_a > 2.064) & (mba_e < 0.45):
+                if (item == mba_name) & (mba_a > 2.064) & (mba_e < 0.45) & (mba_i < 0.6427):
                     mba_list.append(mba_name)
 
     #assert len(mba_list) > 0
