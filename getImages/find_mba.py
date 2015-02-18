@@ -1,6 +1,7 @@
 import numpy as np
 import requests
 import os
+import pandas as pd
 
 def main():
     
@@ -57,7 +58,8 @@ def find_mbas(output=None):
                 a_list2.append(float(index['semimajor_axis']))
                 e_list2.append(float(index['eccentricity']))
                 sini_list2.append(float(index['sin_inclination']))
-    
+        except:
+            print 'Could not find object {}'.format(objectname)
     table2_arrays = {'objectname': name_list, 'semimajor_axis': a_list2, 'eccentricity': e_list2, 'sin_inclination': sini_list2}
     objects_in_mb_table = pd.DataFrame(data=table2_arrays)
 
@@ -65,11 +67,14 @@ def find_mbas(output=None):
         
     print " Number of objects found: {}".format(len(name_list))            
     
-    with open('asteroid_families/mba_wo_fam_data.txt', 'w') as outfile:
-        outfile.write('{}'.format(objects_in_mb_table))
+    objects_in_mb_table.to_csv('asteroid_families/mba_wo_fam_data.csv', sep='\t', encoding='utf-8')
+    name_list.to_csv('asteroid_families/mba_fam_list.txt', sep='\t', encoding='utf-8')
+    
+    #with open('asteroid_families/mba_wo_fam_data.txt', 'w') as outfile:
+    #    outfile.write('{}'.format(objects_in_mb_table))
         
-    with open('asteroid_families/mba_fam_list.txt', 'w') as outfile:
-        outfile.write('{}'.format(name_list))
+    #with open('asteroid_families/mba_fam_list.txt', 'w') as outfile:
+    #    outfile.write('{}'.format(name_list))
               
     return mba_list
 
