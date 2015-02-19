@@ -31,7 +31,7 @@ BASEURL = "http://www.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/vospace/auth/synctrans"
 
 
     
-def get_stamps(familyname, radius, username, password):
+def get_stamps(familyname, radius, username, password, suffix=None):
     
     print "----- Cutting postage stamps of objects in family {}  from CFHT/MegaCam images -----".format(familyname)	
 
@@ -45,7 +45,10 @@ def get_stamps(familyname, radius, username, password):
     if os.path.isdir(family_dir) == False:
         print "Invalid family name or directory does not exist"
     
-    image_list = '{}/{}_images.txt'.format(family_dir, familyname)
+    if familyname == 'none':
+        image_list = '{}/mba_images_{}.txt'.format(family_dir, suffix)
+    else:
+        image_list = '{}/{}_images.txt'.format(family_dir, familyname)
     
     with open(image_list) as infile: 
         for line in infile.readlines()[1:]: # skip header info
@@ -136,14 +139,17 @@ def main():
                         action='store',
                         default=0.005,
                         help='Radius (degree) of circle of cutout postage stamp.')
-    
+    parser.add_argument("--suffix", '-s',
+                        action='store',
+                        default=None,
+                        help='Suffix of mba without family designation')
     args = parser.parse_args()
     
     # CADC PERMISSIONS
     username = raw_input("CADC username: ")
     password = getpass.getpass("CADC password: ")
     
-    get_stamps(args.family, args.radius, username, password)
+    get_stamps(args.family, args.radius, username, password, args.suffix)
 		
 if __name__ == '__main__':
     main()	
