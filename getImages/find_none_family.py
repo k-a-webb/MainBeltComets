@@ -11,7 +11,7 @@ def main():
                         2.064 AU < a < 3.277 AU, e < 0.45, i < 40 deg')
     parser.add_argument("--start", 
                         action="store",
-                        default=0,
+                        default=1,
                         help="Starting point in asteroid list")
     parser.add_argument("--stop", 
                         action='store',
@@ -22,27 +22,70 @@ def main():
     
     start = int(args.start)
     stop = int(args.stop)
-    find_mbas(start, stop)
+    mba_list = find_all_mbas()
+    find_mbas(start, stop, mba_list)
     
-def find_mbas(start, stop, output=None):    
+def find_all_mbas(output=None):    
+    '''
+    Queries the AstDys database for members of the main asteroid belt
+    without family designation
+    '''
+    
+    if output == None:
+        output = 'all_wofam_list.txt'
+        
+    output_dir = '/Users/admin/Desktop/MainBeltComets/getImages/asteroid_families/none'
+    
+    BASEURL = 'http://hamilton.dm.unipi.it/~astdys2/propsynth/numb.famrec'
+    
+    r = requests.get(BASEURL)
+    r.raise_for_status()
+    
+    table = r.content
+    table_lines = table.split('\n')
+        
+    print "----- Searching for obects of in the Main Asteroid Belt without family designation -----"
+        
+    mba_list = []
+        
+    for line in table_lines[1:]:
+        if len(line.split()) > 0:
+            mba_name = line.split()[0]
+            mba_status = line.split()[2]
+            if mba_status == '0':
+                mba_list.append(mba_name)
+
+    assert len(mba_list) > 0
+    print " Number of objects in the M.A.B. w/o family designation: {}".format(len(mba_list))            
+    
+    with open('{}/{}'.format(output_dir, output), 'w') as outfile:
+        for item in mba_list:
+              outfile.write("{}\n".format(item))
+              
+    return mba_list
+
+def find_mbas(start, stop, mba_list=None, output=None):    
     '''
     Queries the AstDys database for members of the main asteroid belt
     2.064 AU < a < 3.277 AU, e < 0.45, i < 40 deg, sini < 0.642 
     '''
     
     if output == None:
-        output = 'all_wofam_list.txt'
-    output_dir = '/Users/admin/Desktop/MainBeltComets/getImages/mba'
+        output = 'mba_list.txt'
+    output_dir = '/Users/admin/Desktop/MainBeltComets/getImages/asteroid_families/mba'
     
     print "---------- \nSearching for obects of in the Main Asteroid Belt with \n2.064 AU < a < 3.277 AU, e < 0.45, i < 40 deg \n----------"
     print "----- Searching asteroids with indexes {} - {}".format(start, stop)     
-    mba_wofam_list = []
-    with open('mba/all_wofam_list.txt') as infile:
-        for line in infile:
-            mba_wofam_list.append(line.strip('\n'))
+    
+    
+    if mba_list == None:
+        mba_list = []
+        with open('mba/all_wofam_list.txt') as infile:
+            for line in infile:
+                mba_list.append(line.strip('\n'))
+    
     
     BASEURL = 'http://hamilton.dm.unipi.it/~astdys2/propsynth/numb.syn'
-    
     r = requests.get(BASEURL)
     r.raise_for_status()
     table = r.content
@@ -67,7 +110,7 @@ def find_mbas(start, stop, output=None):
     sini_list2 = []
     name_list = []
     x = 0
-    for objectname in mba_wofam_list[start:stop]:
+    for objectname in mba_list[start:stop]:
         index = all_objects_table.query('objectname == "{}"'.format(objectname))
         try:
             if (float(index['semimajor_axis']) > 2.064) & (float(index['eccentricity']) < 0.45) & (float(index['sin_inclination']) < 0.642):
@@ -85,10 +128,6 @@ def find_mbas(start, stop, output=None):
     print " Number of objects found: {}".format(len(name_list))            
     
     objects_in_mb_table.to_csv('mba/mba_wo_fam_data_{}.txt'.format(start), sep='\t', encoding='utf-8')
-    #name_list.to_csv('asteroid_families/mba_fam_list.txt', sep='\t', encoding='utf-8')
-    
-    #with open('asteroid_families/mba_wo_fam_data.txt', 'w') as outfile:
-    #    outfile.write('{}'.format(objects_in_mb_table))
         
     with open('mba/mba_wo_fam_list_{}.txt'.format(start), 'w') as outfile:
         outfile.write('{}'.format(name_list))
