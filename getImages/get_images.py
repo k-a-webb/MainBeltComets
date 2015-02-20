@@ -68,7 +68,7 @@ def get_image_info(familyname, filtertype='r', imagetype='p'):
     search_end_date=Time('2017-01-01', scale='utc')     # epoch2=2017+1+1
         
     # Setup output, label columns
-    with open('{}/{}_images2.txt'.format(family_dir, familyname), 'w') as outfile:
+    with open('{}/{}_images.txt'.format(family_dir, familyname), 'w') as outfile:
         outfile.write("{:>10s} {:>10s} {:>10s} {:>16s} {:>16s} {:>16s} {:>12s}\n".format(
             "Object", "Image", "Exp_time", "RA", "DEC", "time", "filter"))
 
@@ -91,7 +91,7 @@ def get_image_info(familyname, filtertype='r', imagetype='p'):
 
         # output the data is previously initiated output file
         if len(obs_in_filter) > 0:
-            with open('{}/{}_images2.txt'.format(family_dir, familyname), 'a') as outfile:
+            with open('{}/{}_images.txt'.format(family_dir, familyname), 'a') as outfile:
                 for line in obs_in_filter:
                     image_list.append(object_name)
                     try:
@@ -154,7 +154,12 @@ def get_image_info_nonefam(suffix, filtertype='r', imagetype='p', familyname='no
         # GET/REVIEW THE DATA RETURNED FROM THE SEARCH
         # Parse the data for Image, Instrument, Filter and create table for each object
         # Download files with appropriate names? ie object+SSOISfilename ??
-        obs_in_filter = parse_ssois_return(query.get(), object_name, imagetype, camera_filter=filtertype)
+        try:
+            obs_in_filter = parse_ssois_return(query.get(), object_name, imagetype, camera_filter=filtertype)
+        except IOError:
+            time.sleep(20)
+            print "Sleeping 20 seconds"
+            obs_in_filter = parse_ssois_return(query.get(), object_name, imagetype, camera_filter=filtertype)
 
         # output the data is previously initiated output file
         if len(obs_in_filter) > 0:
@@ -194,7 +199,7 @@ def parse_ssois_return(ssois_return, object_name, imagetype, camera_filter='r.MP
         # Excludes the OSSOS wallpaper.
         # note: 'Telescope_Insturment' is a typo in SSOIS's return format
         if (row['Telescope_Insturment'] == telescope_instrument) and (row['Filter'] == camera_filter) \
-                and (row['Image'].endswith('{}'.format(imagetype))) and not row['Image_target'].startswith('WP'):
+                and (row['Image'].endswith('{}'.format(imagetype))) and not str(row['Image_target']).startswith('WP'):
             if (int(row['Exptime']) == 287) or (int(row['Exptime']) == 387 ) or (int(row['Exptime']) == 500 ):
                 good_table += 1
                 ret_table.append(row)
