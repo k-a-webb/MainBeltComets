@@ -1,5 +1,4 @@
 import os
-from collections import Counter
 import requests
 from astropy.table import Table
 import pandas as pd
@@ -11,6 +10,7 @@ print '---------- \nSearching for orbital data for objects with family designati
 family_list = []
 object_list = []
 objects = []
+all_images = []
 
 with open('asteroid_families/families_with_images.txt') as infile:
     for line in infile:
@@ -21,24 +21,13 @@ for familyname in family_list:
         next(infile)
         for line in infile:
             objects.append(line.split(' ')[0])
+            all_images.append(line)
             #object_list.append(line.strip('\n'))
             
-'''
+
 with open('asteroid_families/all_images.txt', 'w') as outfile:
-    for item in object_list:
-          outfile.write("{}\n".format(item))
-'''
-counts = Counter(objects)
-
-new_objects = []
-for item in counts:
-    new_objects.append(item)
-    
-num_images = sum(counts.values())
-values =  counts.values()
-
-#print num_images
-#print counts.most_common(10)
+    for item in all_images:
+          outfile.write("{}".format(item))
 
 BASEURL = 'http://hamilton.dm.unipi.it/~astdys2/propsynth/numb.syn'
     
@@ -68,7 +57,6 @@ sini_list2 = []
 name_list = []
 occurance = []
 
-#print counts.values(new_objects[2])
 #print objects.count(new_objects[2])
 
 for objectname in new_objects[1:]:
