@@ -28,10 +28,28 @@ input_table = pd.DataFrame(data=input_arrays)
 #print input_table
 
 pg = sns.PairGrid(input_table, x_vars=["semimajor_axis"], y_vars=["eccentricity", "inclination"], 
-                  aspect=4, hue="occurance", palette="husl", )
-plt.xlim(2, 3.5)
-pg.axes[0][0].set_ylim([0,1])
-plt.ylim(0,16)  
+                  aspect=4, hue="occurance", palette="coolwarm")
+plt.xlim(2.15, 4)
+pg.axes[0][0].set_ylim([0,0.35])
+plt.ylim(0,40)  
+pg.map(plt.scatter, alpha=0.7) 
+pg.add_legend(title='occurance')
+plt.show()
+
+pg = sns.PairGrid(input_table, x_vars=["semimajor_axis"], y_vars=['occurance'], aspect=4)
+plt.xlim(2.15, 4)
+plt.ylim(0,35)  
 pg.map(plt.scatter) 
-pg.add_legend(title='data type')
+plt.show()
+
+pg = sns.PairGrid(input_table, x_vars=["inclination"], y_vars=['occurance'], aspect=4)
+plt.xlim(0, 35)
+plt.ylim(0, 35)  
+pg.map(plt.scatter) 
+plt.show()
+
+pg = sns.PairGrid(input_table, x_vars=["eccentricity"], y_vars=['occurance'], aspect=4)
+plt.xlim(0, 0.3)
+plt.ylim(0, 35)  
+pg.map(plt.scatter) 
 plt.show()
