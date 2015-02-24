@@ -3,6 +3,7 @@ import requests
 from astropy.table import Table
 import pandas as pd
 import numpy as np
+from collections import Counter
 
 print '---------- \nSearching for orbital data for objects with family designations \n----------'
 
@@ -24,6 +25,10 @@ for familyname in family_list:
             all_images.append(line)
             #object_list.append(line.strip('\n'))
             
+counts = Counter(objects)
+new_objects = []
+for item in counts:
+    new_objects.append(item)
 
 with open('asteroid_families/all_images.txt', 'w') as outfile:
     for item in all_images:
@@ -71,8 +76,12 @@ for objectname in new_objects[1:]:
     except:
         print 'Could not find object {}'.format(objectname)
 
-table2_arrays = {'objectname': name_list, 'num_of_observations': occurance, 'semimajor_axis': a_list2, 'eccentricity': e_list2, 'sin_inclination': sini_list2}
+i_list2 = np.degrees(np.arcsin(sini_list2))
+
+table2_arrays = {'objectname': name_list, 'occurance': occurance, 'semimajor_axis': a_list2, 'eccentricity': e_list2, 'inclination': i_list2, 'sin_inclination': sini_list2}
 objects_in_fam_table = pd.DataFrame(data=table2_arrays)
+
+
 
 #print objects_in_fam_table
 
