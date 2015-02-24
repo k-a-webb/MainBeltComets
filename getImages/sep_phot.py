@@ -12,7 +12,8 @@ from astropy.time import Time
 import argparse
 from scipy.spatial import cKDTree
 import math
-from pyraf import iraf
+#from pyraf import iraf
+import pandas as pd
 
 client = vos.Client()
 
@@ -23,6 +24,7 @@ from ossos_scripts import storage
 import ossos_scripts.wcs as wcs
 from ossos_scripts.storage import get_astheader, exists
 from get_images import get_image_info
+from find_family import find_family_members
 
 ''' 
 Preforms photometry on .fits files given an input of family name and object name
@@ -44,12 +46,9 @@ NOTES, to do:
 '''
 
 
-def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=5.0, filtertype='r', imagetype='p', elim=0.3):
+def find_objects_by_phot(familyname, objectname, ap=10.0, th=5.0, filtertype='r', imagetype='p', elim=0.3):
     
-    if objectname == None:
-        image_list = get_image_info(familyname, filtertype, imagetype)
-        objectname = image_list[0]
-        print "WARNING: Object name not specified, searching for {}".format(objectname)
+    print 'Finding asteroid {} in family {} '.format(objectname, familyname)
     
     # From the given input, identify the desired filter and rename appropriately
     if filtertype.lower().__contains__('r'):
@@ -59,11 +58,10 @@ def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=5.0, filtertyp
     
     # initiate directories
     init_dirs(familyname, objectname)
-    out_filename = '{}_r{}_t{}_output.txt'.format(objectname, ap, th)
+    out_filename = '{}_r{}_t{}_output.txt'.format(familyname, ap, th)
 
     with open('{}/{}'.format(stamps_dir, out_filename), 'w') as outfile:
-        outfile.write("{:>3s} {:>5s} {:>17s} {:>10s} {:>17s} {:>10s}\n".format(
-            "Image", 'flux', 'mag', 'RA', 'DEC', 'ecc'))        
+        outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('Object', "Image", 'flux', 'mag', 'RA', 'DEC', 'ecc'))        
 
     # get range of magnitudes of object over time span that the images were taken
     print "----- Querying JPL Horizon's ephemeris for apparent magnitudes -----"
@@ -73,6 +71,7 @@ def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=5.0, filtertyp
     # preform the photometry and identify object
     print "----- Preforming photometry on all images of {} in family {} -----".format(objectname, familyname)
     
+    stamp_list = []
     for file in client.listdir(vos_dir):
     #for file in os.listdir(stamps_dir):
         if file.endswith('.fits') == True:
@@ -80,7 +79,7 @@ def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=5.0, filtertyp
             if objectname_file == objectname:
             # images named with convention: object_expnum_RA_DEC.fits
                 expnum_p = file.split('_')[1]
-
+                stamp_list.append(expnum_p)
                 storage.copy('{}/{}'.format(vos_dir, file), '{}/{}'.format(stamps_dir, file))
                 #assert os.path.exists('{}/{}'.format(vos_dir, file))
                 #with fits.open('{}/{}'.format(vos_dir, file)) as hdulist:
@@ -133,6 +132,9 @@ def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=5.0, filtertyp
                     '''
                
                     os.unlink('{}/{}'.format(stamps_dir, file))
+    
+    if len(stamp_list) == 0:
+        print "WARNING: No stamps found"
                 
 def query_jpl(objectname, step=1, su='d'):
     '''
@@ -568,13 +570,12 @@ def phot_mag(*args, **kwargs):
 def init_dirs(familyname, objectname):
     
     global imageinfo
-    imageinfo = familyname+'_images.txt'
-    
+    imageinfo = familyname+'_images_test.txt' # FOR TESTING, CALLS TEST FILE
+    print "WARNING: Using test file"
     
     # initiate vos directories 
     global vos_dir
     vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
-    print vos_dir
     assert exists(vos_dir, force=True)
 
     
@@ -588,7 +589,6 @@ def init_dirs(familyname, objectname):
     stamps_dir = os.path.join(family_dir, familyname+'_stamps')
     if os.path.isdir(stamps_dir) == False:
         os.makedirs(stamps_dir)
-
         
     assert os.path.exists('{}/{}'.format(family_dir, imageinfo))
     
@@ -616,7 +616,7 @@ def main():
                         and then selects the object in the image from the predicted coordinates, magnitude, and eventually shape')
     parser.add_argument("--family", '-f',
                         action="store",
-                        default="3330",
+                        default=None,
                         help="Asteroid family name. Usually the asteroid number of the largest member.")
     parser.add_argument("--aperture", '-ap',
                         action='store',
@@ -646,7 +646,19 @@ def main():
                             
     args = parser.parse_args()
     
-    find_objects_by_phot(args.family, args.object, float(args.aperture), float(args.thresh), args.filter, args.type, args.elim)
+    if args.family == None:
+        familyname = 'all'
+        all_images = pd.read_table('asteroid_families/all/all_images_test.txt') # FOR TESTING, CALLS TEST FILE
+        object_list = all_images['Object'].values
+        for objectname in object_list:
+            find_objects_by_phot(familyname, str(objectname), float(args.aperture), float(args.thresh), args.filter, args.type, args.elim)
+    else:
+        if args.object == None:
+            object_list = find_family_members(args.family)
+            for objectname in object_list:
+                find_objects_by_phot(args.family, objectname, float(args.aperture), float(args.thresh), args.filter, args.type, args.elim)
+        else:        
+            find_objects_by_phot(args.family, args.object, float(args.aperture), float(args.thresh), args.filter, args.type, args.elim)
     
 if __name__ == '__main__':
     main()
