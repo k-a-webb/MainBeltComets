@@ -46,12 +46,12 @@ def get_stamps(familyname, radius, username, password, suffix=None):
         print "Invalid family name or directory does not exist"
     
     if familyname == 'none':
-        image_list = '{}/mba_images_{}.txt'.format(family_dir, suffix)
+        image_list = '{}/none_images_{}.txt'.format(family_dir, suffix)
     else:
         image_list = '{}/{}_images.txt'.format(family_dir, familyname)
     
     with open(image_list) as infile: 
-        for line in infile.readlines()[1:]: # skip header info
+        for line in infile.readlines()[5094:]: # skip header info
             assert len(line.split()) > 0
             objectname = line.split()[0]
             expnum = line.split()[1]
@@ -63,7 +63,12 @@ def get_stamps(familyname, radius, username, password, suffix=None):
                 storage.mkdir(vos_dir)
             #assert storage.exists(vos_dir, force=True)
 
-            cutout(objectname, expnum, RA, DEC, radius, username, password, familyname, vos_dir)
+            postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, expnum, RA, DEC)
+            if storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)) == True:
+                print "  Stamp already exists"
+            else:
+                cutout(objectname, expnum, RA, DEC, radius, username, password, familyname, vos_dir)
+                
 	
 def cutout(objectname, image, RA, DEC, radius, username, password, familyname, vos_dir):
     # CUT OUT (image, RA, DEC, radius, CADC permissions)
@@ -85,7 +90,7 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname, v
             os.makedirs(output_dir)
         
     this_cutout = "CIRCLE ICRS {} {} {}".format(RA, DEC, radius)                                 
-    print "cut out: ", this_cutout
+    print "cut out: {} {} {} {} {}".format(objectname, image, RA, DEC, radius)
 
     expnum = image.split('p')[0] # only want calibrated images    
     target = storage.vospace.fixURI(storage.get_uri(expnum)) 
@@ -101,7 +106,7 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname, v
     try:
         r = requests.get(BASEURL, params=params, auth=(username, password))
         
-        postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, image, RA, DEC)
+        postage_stamp_filename = "{}_{}_{}_{}.fits".format(objectname, image, RA, DEC)
     
         with open('{}/{}'.format(output_dir, postage_stamp_filename), 'w') as tmp_file:
             object_dir = 'asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, postage_stamp_filename)
