@@ -54,7 +54,7 @@ def get_image_info(familyname, suffix=None, filtertype='r', imagetype='p'):
         output = '{}_images.txt'.format(familyname)
     else:
         family_list = '{}/none_family_{}.txt'.format(family_dir, suffix)
-        output = '{}_images_{}'.format(familyname, suffix)
+        output = '{}_images_{}.txt'.format(familyname, suffix)
     
     with open(family_list) as infile: 
         filestr = infile.read()
@@ -81,7 +81,7 @@ def get_image_info(familyname, suffix=None, filtertype='r', imagetype='p'):
     print " with filter {} and exposure time of 287, 387, 500 seconds (OSSOS data) \n--------------------".format(filtertype)
         
     image_list = []
-    for object_name in object_list[:50]:#len(object_list)-1]:
+    for object_name in object_list[:len(object_list)-1]:
         query = Query(object_name, search_start_date=search_start_date, search_end_date=search_end_date)
 
         # GET/REVIEW THE DATA RETURNED FROM THE SEARCH
@@ -104,8 +104,8 @@ def get_image_info(familyname, suffix=None, filtertype='r', imagetype='p'):
                 table_arrays = {'object': object_name, 'image': line['Image'], 'Exptime': line['Exptime'], 'RA': line['Object_RA'], \
                                         'DEC': line['Object_Dec'], 'date': Time(line['MJD'], format='mjd', scale='utc'), 'filter': line['Filter']}
                                         
-    table = pd.DataFrame(data=table_arrays, index=index)
-    table.to_csv('{}/{}'.format(family_dir, output), sep='\t', encoding='utf-8', index=False) 
+            table = pd.DataFrame(data=table_arrays, index=index)
+            table.to_csv('{}/{}'.format(family_dir, output), sep='\t', encoding='utf-8', index=False) 
                
     return image_list
                     
