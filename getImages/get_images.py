@@ -43,6 +43,10 @@ def get_image_info(familyname, suffix=None, filtertype='r', imagetype='p'):
     '''
     Query the ssois ephemeris for images of objects in a given family. Then parse through for desired image type, 
     filter, exposure time, and telescope instrument
+    CADC : search = bynameCADC , MPC : search = bynameMPC
+    ephemeris, name, date range, resolve image extension, resolve to x,y, positional uncertainty?
+    http:// www3.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/cadcbin/ssos/ssosclf.pl?lang=en; object=elst-pizarro; 
+        search=bynameMPC; epoch1=2013+01+01; epoch2=2015+1+16; eellipse=; eunits=arcseconds; extres=yes; xyres=yes; format=tsv
     '''
     
     family_dir = os.path.join(dir_path_base, familyname)
@@ -51,16 +55,14 @@ def get_image_info(familyname, suffix=None, filtertype='r', imagetype='p'):
     
     if suffix == None:
         family_list = '{}/{}_family.txt'.format(family_dir, familyname)
-        output = '{}_images.txt'.format(familyname)
+        output = '{}_images_1.txt'.format(familyname)
     else:
         family_list = '{}/none_family_{}.txt'.format(family_dir, suffix)
-        output = '{}_images_{}.txt'.format(familyname, suffix)
+        output = '{}_images_{}_1.txt'.format(familyname, suffix)
     
     with open(family_list) as infile: 
         filestr = infile.read()
     object_list = filestr.split('\n') # array of objects to query
-
-    # TO DO: confirm that the input is the proper format to search for the appropriate ephemeris
     
     # From the given input, identify the desired filter and rename appropriately
     if filtertype.lower().__contains__('r'):
@@ -71,11 +73,11 @@ def get_image_info(familyname, suffix=None, filtertype='r', imagetype='p'):
     # Define time period of image search, basically while MegaCam in operation
     search_start_date=Time('2013-01-01', scale='utc')   # epoch1=2013+01+01
     search_end_date=Time('2017-01-01', scale='utc')     # epoch2=2017+1+1
-
-    # Query a specific ephemeris depending on object naming convention. CADC : search = bynameCADC , MPC : search = bynameMPC
-    # Specify search parameters
-        # ephemeris, name, date range, resolve image extension, resolve to x,y, positional uncertainty?
-        # http:// www3.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/cadcbin/ssos/ssosclf.pl?lang=en; object=elst-pizarro; search=bynameMPC; epoch1=2013+01+01; epoch2=2015+1+16; eellipse=; eunits=arcseconds; extres=yes; xyres=yes; format=tsv
+    
+    # Setup output, label columns
+    with open('{}/{}'.format(family_dir, output), 'w') as outfile:
+        outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(
+            "Object", "Image", "Exp_time", "RA", "DEC", "time", "filter"))
         
     print "-------------------- \n Searching for images of objects in family {} from CFHT/Megacam from the MPC ephemeris".format(familyname)
     print " with filter {} and exposure time of 287, 387, 500 seconds (OSSOS data) \n--------------------".format(filtertype)
@@ -83,10 +85,6 @@ def get_image_info(familyname, suffix=None, filtertype='r', imagetype='p'):
     image_list = []
     for object_name in object_list[:len(object_list)-1]:
         query = Query(object_name, search_start_date=search_start_date, search_end_date=search_end_date)
-
-        # GET/REVIEW THE DATA RETURNED FROM THE SEARCH
-        # Parse the data for Image, Instrument, Filter and create table for each object
-        # Download files with appropriate names? ie object+SSOISfilename ??
         
         try:
             objects = parse_ssois_return(query.get(), object_name, imagetype, camera_filter=filtertype)
@@ -94,18 +92,18 @@ def get_image_info(familyname, suffix=None, filtertype='r', imagetype='p'):
             time.sleep(20)
             print "Sleeping 20 seconds"
             objects = parse_ssois_return(query.get(), object_name, imagetype, camera_filter=filtertype)
-        x=0
-        index=[]
+
         if len(objects) > 0:
             for line in objects:
-                image_list.append(object_name)
-                index.append(x)
-                x+=1
-                table_arrays = {'object': object_name, 'image': line['Image'], 'Exptime': line['Exptime'], 'RA': line['Object_RA'], \
-                                        'DEC': line['Object_Dec'], 'date': Time(line['MJD'], format='mjd', scale='utc'), 'filter': line['Filter']}
-                                        
-            table = pd.DataFrame(data=table_arrays, index=index)
-            table.to_csv('{}/{}'.format(family_dir, output), sep='\t', encoding='utf-8', index=False) 
+                with open('{}/{}'.format(family_dir, output), 'a') as outfile:
+                    for line in obs_in_filter:
+                        image_list.append(object_name)
+                        try:
+                            outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(object_name,
+                                line['Image'], line['Exptime'], line['Object_RA'], line['Object_Dec'],
+                                Time(line['MJD'], format='mjd', scale='utc'), line['Filter']))
+                        except:
+                            print "cannot write to outfile"
                
     return image_list
                     
