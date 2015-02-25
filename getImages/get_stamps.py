@@ -29,29 +29,31 @@ from astropy.table import Table, Column
 
 BASEURL = "http://www.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/vospace/auth/synctrans"
 
-
+"""
+Retrieval of cutouts of the FITS images associated with the CFHT/MegaCam detections.
+Takes a table (get_images.py output) as input
+An Example URL for cutouts from OSSOS (not CFHT/MegaCam)
+http://www.canfar.phys.uvic.ca/vospace/auth/synctrans?
+TARGET=vos://cadc.nrc.ca~vospace/OSSOS/dbimages/1625356/1625356p.fits&
+DIRECTION=pullFromVoSpace&
+PROTOCOL=ivo://ivoa.net/vospace/core%23httpget&
+view=cutout&
+cutout=CIRCLE+ICRS+242.1318+-12.4747+0.05
+"""
     
 def get_stamps(familyname, radius, username, password, suffix=None):
     
-    print "----- Cutting postage stamps of objects in family {}  from CFHT/MegaCam images -----".format(familyname)	
-
-    # PARSE THROUGH INPUT FILE FOR IMAGE INFORMATION
-        # format into lines, parse for image, RA and DEC
-        # CUT OUT IMAGE
-	        # PASS: object, directory, radius, CADC permissions                    
+    print "----- Cutting postage stamps of objects in family {}  from CFHT/MegaCam images -----".format(familyname)	                  
     
     dir_path_base = '/Users/admin/Desktop/MainBeltComets/getImages/asteroid_families'
     family_dir = os.path.join(dir_path_base, familyname)
     if os.path.isdir(family_dir) == False:
         print "Invalid family name or directory does not exist"
     
-    if familyname == 'none':
-        image_list = '{}/none_images_{}.txt'.format(family_dir, suffix)
-    else:
-        image_list = '{}/{}_images.txt'.format(family_dir, familyname)
+    image_list = '{}/{}_images.txt'.format(family_dir, familyname)
     
     with open(image_list) as infile: 
-        for line in infile.readlines()[5094:]: # skip header info
+        for line in infile.readlines()[1:]: # skip header info
             assert len(line.split()) > 0
             objectname = line.split()[0]
             expnum = line.split()[1]
@@ -71,15 +73,9 @@ def get_stamps(familyname, radius, username, password, suffix=None):
                 
 	
 def cutout(objectname, image, RA, DEC, radius, username, password, familyname, vos_dir):
-    # CUT OUT (image, RA, DEC, radius, CADC permissions)
-	# for each attribute in mpc_observations:
-		# storage.vospace.fixURI and 
-			# storage.get_uri (Build the uri for an OSSOS image stored in the dbimages containerNode)
-		# define parameters for request: target, protocol, direction, cutout, view
-		# request image : url, parameters, cadc permissions
-		# assign to a file
     
-    ''' Test for image known to work   
+    ''' 
+    Test for image known to work   
     image = '1667879p'
     RA = 21.1236333333
     DEC = 11.8697277778
@@ -87,7 +83,7 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname, v
     
     output_dir = 'asteroid_families/{}/{}_stamps'.format(familyname, familyname)
     if os.path.isdir(output_dir) == False:
-            os.makedirs(output_dir)
+        os.makedirs(output_dir)
         
     this_cutout = "CIRCLE ICRS {} {} {}".format(RA, DEC, radius)                                 
     print "cut out: {} {} {} {} {}".format(objectname, image, RA, DEC, radius)
@@ -106,7 +102,7 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname, v
     try:
         r = requests.get(BASEURL, params=params, auth=(username, password))
         
-        postage_stamp_filename = "{}_{}_{}_{}.fits".format(objectname, image, RA, DEC)
+        postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, image, RA, DEC)
     
         with open('{}/{}'.format(output_dir, postage_stamp_filename), 'w') as tmp_file:
             object_dir = 'asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, postage_stamp_filename)
@@ -123,22 +119,14 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname, v
     
     
 def main():
-    
-    # PARSE INFORMATION INPUTTED FROM THE COMMAND LINE
-	# VERSION - OSSOS DATA RELEASE VERSION THE STAMPS ARE TO BE ASSIGNED TO
-	# INPUT FILE
-	# RADIUS - SIZE OF CIRCULAR CUTOUT
-    
-    # INPUT LIST OF IMAGES IN COMMAND LINE
-    # IDENTIFY PARAMETERS FOR QUERY OF SSOIS FROM INPUT
 
     parser = argparse.ArgumentParser(
-        description='Parse an obects.txt input file (find_family.py output) and create links in the postage stamp directory '
+        description='Parse an familyname.images.txt input file (get_images.py output) and create links in the postage stamp directory '
                     'that allow retrieval of cutouts of the FITS images associated with the CHT/MegaCam detections. '
                     'Cutouts are defined on the WCS RA/DEC of the object position.')
     parser.add_argument("--family", '-f',
                         action="store",
-                        default="lixImages.txt",
+                        default=None,
                         help="The input .txt files of astrometry/photometry measurements.")
     parser.add_argument("--radius", '-r',
                         action='store',
