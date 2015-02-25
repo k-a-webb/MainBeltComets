@@ -91,9 +91,13 @@ def get_image_info(familyname, suffix=None, filtertype='r', imagetype='p'):
         except IOError:
             time.sleep(20)
             print "Sleeping 20 seconds"
-            objects = parse_ssois_return(query.get(), object_name, imagetype, camera_filter=filtertype)
-
-        if len(objects) > 0:
+            try:
+                objects = parse_ssois_return(query.get(), object_name, imagetype, camera_filter=filtertype)
+            except IOError:
+                time.sleep(40)
+                print "Sleeping 40 seconds"
+                objects = parse_ssois_return(query.get(), object_name, imagetype, camera_filter=filtertype)
+                
             for line in objects:
                 with open('{}/{}'.format(family_dir, output), 'a') as outfile:
                     for line in obs_in_filter:
