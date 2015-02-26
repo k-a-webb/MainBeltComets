@@ -6,7 +6,7 @@ from find_family import find_family_members
 from find_family import get_all_families_list
 from get_images import get_image_info
 from get_stamps import get_stamps
-from sep_phot import select_object
+from sep_phot import iterate_thru_images
 
 from ossos_scripts import storage
 import ossos_scripts.coding
@@ -58,11 +58,9 @@ def main():
                             
     args = parser.parse_args()
     
-    # CADC PERMISSIONS
-    username = raw_input("CADC username: ")
-    password = getpass.getpass("CADC password: ")
+
     
-    do_all_things(username, password, args.family, args.object, args.filter, args.type, args.radius, args.aperture, args.thresh)
+    do_all_things(args.family, args.object, args.filter, args.type, args.radius, args.aperture, args.thresh)
     
     '''
     family_file = 'asteroid_families/{}/{}_family.txt'.format(args.family, args.family)
@@ -80,10 +78,10 @@ def main():
         do_all_things(username, password, args.family, args.object, args.filter, args.type, args.radius, args.aperture, args.thresh)
     '''
     
-def do_all_things(username, password, familyname, objectname=None, filtertype='r', imagetype='p', radius=0.005, aperture=10.0, thresh=5.0):
+def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', radius=0.005, aperture=10.0, thresh=5.0):
    
-    family_list_path = 'asteroid_families/{}/{}_family.txt'.format(familyname, familyname) # TEST FILE
-    #print "WARNING: USING A TEST FILE ******************************"
+    family_list_path = 'asteroid_families/{}/{}_family.txt'.format(familyname, familyname)
+    
     if  os.path.exists(family_list_path):
         print "----- List of objects in family {} exists already -----".format(familyname)
         with open(family_list_path) as infile:
@@ -92,34 +90,44 @@ def do_all_things(username, password, familyname, objectname=None, filtertype='r
     else:    
         all_object_list = find_family_members(familyname)
     
-    image_list = []
-    image_list_path = 'asteroid_families/{}/{}_images.txt'.format(familyname, familyname)  
+    image_list_path = 'asteroid_families/{}/{}_images_test.txt'.format(familyname, familyname) # USING TEST FILE
+    print "WARNING: USING A TEST FILE ******************************" 
     if  os.path.exists(image_list_path):
+        expnum_list = []
+        image_list = []
+        ra_list = []
+        dec_list = []
         print "----- List of images in family {} exists already -----".format(familyname)
         with open(image_list_path) as infile:
             filestr = infile.read()
             fileline = filestr.split('\n')
-            for item in fileline:
+            for item in fileline[1:]:
                 if len(item.split()) > 0:
                     image_list.append(item.split()[0])
+                    expnum_list.append(item.split()[1])
+                    ra_list.append(float(item.split()[3]))
+                    dec_list.append(float(item.split()[4]))
     else:  
-        image_list = get_image_info(familyname, filtertype, imagetype) 
-                
-    object_list = []
-    for item in all_object_list:
-        if item in image_list:
-            object_list.append(item)
+        image_list, expnum_list, ra_list, dec_list = get_image_info(familyname, filtertype, imagetype) 
 
-    '''
-    stamps_dir = 'asteroid_families/{}/{}_stamps'.format(familyname, familyname)
-    if os.path.exists(stamps_dir):
-        print '----- Stamps already exist in VOSpace -----'
-    else:
-        get_stamps(familyname, radius, username, password)
-    '''
+    username = raw_input("CADC username: ")
+    password = getpass.getpass("CADC password: ")
     
-    for objectname in object_list:
-        select_object(familyname, objectname, aperture, thresh)    
+    for index, objectname in enumerate(image_list):
+        
+        print '\n----- Searching for {} {} -----'.format(objectname, expnum_list[index])
+        
+        vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
+        postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, expnum_list[index], ra_list[index], dec_list[index])
+        if storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)) == True:
+            print "-- Stamp already exists"
+        else:
+            cutout(objectname, expnum_list[index], ra_list[index], dec_list[index], radius, username, password, familyname)
+        
+        #familyname, objectname=None, ap=10.0, th=5.0, filtertype='r', imagetype='p', elim=0.3
+        
+        object_data = iterate_thru_images(familyname, objectname, expnum_list[index], username, password, aperture, thresh, filtertype, imagetype)  
+
               
 
                         
