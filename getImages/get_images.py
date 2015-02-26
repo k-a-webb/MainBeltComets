@@ -39,7 +39,7 @@ def main():
             
     get_image_info(args.family, args.suffix, args.filter, args.type)
 
-def get_image_info(familyname, suffix=None, filtertype='r', imagetype='p'):
+def get_image_info(familyname, filtertype='r', imagetype='p', suffix=None):
     '''
     Query the ssois ephemeris for images of objects in a given family. Then parse through for desired image type, 
     filter, exposure time, and telescope instrument
@@ -53,9 +53,9 @@ def get_image_info(familyname, suffix=None, filtertype='r', imagetype='p'):
     if os.path.isdir(family_dir) == False:
         print "Invalid family name or directory does not exist"
     
-    if suffix == None:
+    if suffix is None:
         family_list = '{}/{}_family.txt'.format(family_dir, familyname)
-        output = '{}_images_1.txt'.format(familyname)
+        output = '{}_images.txt'.format(familyname)
     else:
         family_list = '{}/none_family_{}.txt'.format(family_dir, suffix)
         output = '{}_images_{}_1.txt'.format(familyname, suffix)
@@ -83,6 +83,9 @@ def get_image_info(familyname, suffix=None, filtertype='r', imagetype='p'):
     print " with filter {} and exposure time of 287, 387, 500 seconds (OSSOS data) \n--------------------".format(filtertype)
         
     image_list = []
+    expnum_list = []
+    ra_list = []
+    dec_list = []
     for object_name in object_list[:len(object_list)-1]:
         query = Query(object_name, search_start_date=search_start_date, search_end_date=search_end_date)
         
@@ -98,18 +101,20 @@ def get_image_info(familyname, suffix=None, filtertype='r', imagetype='p'):
                 print "Sleeping 40 seconds"
                 objects = parse_ssois_return(query.get(), object_name, imagetype, camera_filter=filtertype)
                 
-            for line in objects:
-                with open('{}/{}'.format(family_dir, output), 'a') as outfile:
-                    for line in obs_in_filter:
-                        image_list.append(object_name)
-                        try:
-                            outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(object_name,
-                                line['Image'], line['Exptime'], line['Object_RA'], line['Object_Dec'],
-                                Time(line['MJD'], format='mjd', scale='utc'), line['Filter']))
-                        except:
-                            print "cannot write to outfile"
+        for line in objects:
+            with open('{}/{}'.format(family_dir, output), 'a') as outfile:
+                    image_list.append(object_name)
+                    expnum_list.append(line['Exptime'])
+                    ra_list.append(line['Object_RA'])
+                    dec_list.append(line['Object_Dec'])
+                    try:
+                        outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(object_name,
+                            line['Image'], line['Exptime'], line['Object_RA'], line['Object_Dec'],
+                            Time(line['MJD'], format='mjd', scale='utc'), line['Filter']))
+                    except:
+                        print "cannot write to outfile"    
                
-    return image_list
+    return image_list, expnum_list, ra_list, dec_list
                     
 def parse_ssois_return(ssois_return, object_name, imagetype, camera_filter='r.MP9601', telescope_instrument='CFHT/MegaCam'):
     '''
