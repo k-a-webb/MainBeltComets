@@ -1,15 +1,3 @@
-"""Retrieval of cutouts of the FITS images associated with the CFHT/MegaCam detections.
-Takes a table (getmbc.py output) as input
-
-An Example URL for cutouts from OSSOS (not CFHT/MegaCam)
-http://www.canfar.phys.uvic.ca/vospace/auth/synctrans?
-TARGET=vos://cadc.nrc.ca~vospace/OSSOS/dbimages/1625356/1625356p.fits&
-DIRECTION=pullFromVoSpace&
-PROTOCOL=ivo://ivoa.net/vospace/core%23httpget&
-view=cutout&
-cutout=CIRCLE+ICRS+242.1318+-12.4747+0.05
-"""
-
 import argparse
 import getpass
 import requests
@@ -56,7 +44,7 @@ def main():
                         help="The input .txt files of astrometry/photometry measurements.")
     parser.add_argument("--radius", '-r',
                         action='store',
-                        default=0.005,
+                        default=0.01,
                         help='Radius (degree) of circle of cutout postage stamp.')
     parser.add_argument("--suffix", '-s',
                         action='store',
@@ -68,11 +56,56 @@ def main():
     username = raw_input("CADC username: ")
     password = getpass.getpass("CADC password: ")
     
-    get_stamps(args.family, args.radius, username, password, args.suffix)
+    get_stamps(args.family, username, password, args.radius, args.suffix)
     
-def get_stamps(familyname, radius, username, password, suffix=None):
+def get_stamps(familyname, username, password, radius=0.01, suffix=None):
     
     print "----- Cutting postage stamps of objects in family {}  from CFHT/MegaCam images -----".format(familyname)	                  
+    
+    dir_path_base = '/Users/admin/Desktop/MainBeltComets/getImages/asteroid_families'
+    family_dir = os.path.join(dir_path_base, familyname)
+    if os.path.isdir(family_dir) == False:
+        print "Invalid family name or directory does not exist"
+
+    image_list = '{}/{}_images.txt'.format(family_dir, familyname)
+    with open(image_list) as infile: 
+        for line in infile.readlines()[9360:]: # skip header info
+            assert len(line.split()) > 0
+            objectname = line.split()[0]
+            expnum = line.split()[1]
+            RA = float(line.split()[3])   
+            DEC = float(line.split()[4])
+                        
+            vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
+            if not storage.exists(vos_dir, force=True):
+                storage.mkdir(vos_dir)
+            #assert storage.exists(vos_dir, force=True)
+
+            postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, expnum, RA, DEC)
+            if storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)) == True:
+                print "  Stamp already exists"
+            else:
+                
+                urlData, date_start, date_end = query_jpl(familyname, objectname, step=1)
+                print "----- Querying JPL Horizon's ephemeris for RA and DEC uncertainties -----"
+                RA_3sigma, DEC_3sigma = parse_mag_jpl(urlData, date_start, date_end) # in arcseconds
+            
+                RA_3sigma_avg = np.mean(RA_3sigma) / 3600 # convert to degrees
+                DEC_3sigma_avg = np.mean(DEC_3sigma) / 3600
+            
+                if RA_3sigma_avg > DEC_3sigma_avg:
+                    r_temp = RA_3sigma_avg
+                else:
+                    r_temp = DEC_3sigma_avg
+                
+                if r_temp > radius:
+                    radius = r_temp
+                
+                cutout(objectname, expnum, RA, DEC, radius, username, password, familyname)
+                
+def get_one_stamp(objectname, expnum, radius, username, password, familyname):
+    
+    print "-- Cutting postage stamps of {} {}".format(objectname, expnum)	                  
     
     dir_path_base = '/Users/admin/Desktop/MainBeltComets/getImages/asteroid_families'
     family_dir = os.path.join(dir_path_base, familyname)
@@ -84,32 +117,37 @@ def get_stamps(familyname, radius, username, password, suffix=None):
         for line in infile.readlines()[1:]: # skip header info
             assert len(line.split()) > 0
             objectname = line.split()[0]
-            expnum = line.split()[1]
+            expnum_file = line.split()[1]
             RA = float(line.split()[3])   
             DEC = float(line.split()[4])
-            
-            urlData, date_start, date_end = query_jpl(familyname, objectname, step=1)
-            print "----- Querying JPL Horizon's ephemeris for RA and DEC uncertainties -----"
-            RA_3sigma, DEC_3sigma = parse_mag_jpl(urlData, date_start, date_end)
-            
-            RA_3sigma_avg = np.mean(RA_3sigma)
-            DEC_3sigma_avg = np.mean(DEC_3sigma)
-            
-            #print RA_3sigma_avg, DEC_3sigma_avg
-            
+                        
             vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
             if not storage.exists(vos_dir, force=True):
                 storage.mkdir(vos_dir)
             #assert storage.exists(vos_dir, force=True)
-
-            postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, expnum, RA, DEC)
-            if storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)) == True:
-                print "  Stamp already exists"
-            else:
-                cutout(objectname, expnum, RA, DEC, radius, username, password, familyname, vos_dir)
-                
+            
+            if expnum == expnum_file:
+                '''
+                urlData, date_start, date_end = query_jpl(familyname, objectname, step=1)
+                print "----- Querying JPL Horizon's ephemeris for RA and DEC uncertainties -----"
+                RA_3sigma, DEC_3sigma = parse_mag_jpl(urlData, date_start, date_end) # in arcseconds
+        
+                RA_3sigma_avg = np.mean(RA_3sigma) / 3600 # convert to degrees
+                DEC_3sigma_avg = np.mean(DEC_3sigma) / 3600
+        
+                if RA_3sigma_avg > DEC_3sigma_avg:
+                    r_temp = RA_3sigma_avg
+                else:
+                    r_temp = DEC_3sigma_avg
+            
+                if r_temp > radius:
+                    radius = r_temp
+                '''
+            
+                cutout(objectname, expnum, RA, DEC, radius, username, password, familyname)
+                return                
 	
-def cutout(objectname, image, RA, DEC, radius, username, password, familyname, vos_dir):
+def cutout(objectname, image, RA, DEC, radius, username, password, familyname):
     
     ''' 
     Test for image known to work   
@@ -117,7 +155,7 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname, v
     RA = 21.1236333333
     DEC = 11.8697277778
     '''
-    
+    vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
     output_dir = 'asteroid_families/{}/{}_stamps'.format(familyname, familyname)
     if os.path.isdir(output_dir) == False:
         os.makedirs(output_dir)
@@ -136,25 +174,23 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname, v
                   "cutout": this_cutout,
                   "view": view}
     
+    r = requests.get(BASEURL, params=params, auth=(username, password))
+    
     try:
-        r = requests.get(BASEURL, params=params, auth=(username, password))
-        r.raise_for_status()  # confirm the connection worked as hoped
-        
-        postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, image, RA, DEC)
+          r.raise_for_status()  # confirm the connection worked as hoped
     
-        with open('{}/{}'.format(output_dir, postage_stamp_filename), 'w') as tmp_file:
-            object_dir = 'asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, postage_stamp_filename)
-            assert os.path.exists(object_dir)
-            tmp_file.write(r.content)
-            storage.copy(object_dir, '{}/{}'.format(vos_dir, postage_stamp_filename))
-        os.unlink(object_dir)  # easier not to have them hanging around
-        
-    except requests.exceptions.ConnectionError as e:
-        print "These aren't the domains we're looking for."
+          postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, image, RA, DEC)
+
+          with open('{}/{}'.format(output_dir, postage_stamp_filename), 'w') as tmp_file:
+              object_dir = 'asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, postage_stamp_filename)
+              assert os.path.exists(object_dir)
+              tmp_file.write(r.content)
+              storage.copy(object_dir, '{}/{}'.format(vos_dir, postage_stamp_filename))
+          os.unlink(object_dir)  # easier not to have them hanging around    
     
-    #r = requests.get(BASEURL, params=params, auth=(username, password))
-    #r.raise_for_status()  # confirm the connection worked as hoped
-    
+    except: 
+        print 'Connection Failed'
+        return
     
 
 def query_jpl(familyname, objectname, step=1, su='d'):
