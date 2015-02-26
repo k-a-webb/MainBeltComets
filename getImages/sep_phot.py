@@ -25,6 +25,7 @@ import ossos_scripts.wcs as wcs
 from ossos_scripts.storage import get_astheader, exists
 from get_images import get_image_info
 from find_family import find_family_members
+import get_stamps
 
 ''' 
 Preforms photometry on .fits files given an input of family name and object name
@@ -37,18 +38,58 @@ dir_path_base/familyname/*_images.txt                       - list of image expo
 
 '''
 NOTES, to do:
-    - read in files from VOSpace - NOT WORKING
     - add in psf.py to get PSF
-    - find uncertianty of predicted coordinates and use that as nearest neighbour ball search
     - reformat list appending
-    - get rid of images with incorrect WCS
-    - go through all objects for a family
 '''
 
-
-def find_objects_by_phot(familyname, objectname, ap=10.0, th=5.0, filtertype='r', imagetype='p', elim=0.3):
+def main(): 
     
-    print 'Finding asteroid {} in family {} '.format(objectname, familyname)
+    parser = argparse.ArgumentParser(
+                        description='For a given set of fits images, \
+                         preforms photometry on a specified object given an aperture size and threshold, \
+                        and then selects the object in the image from the predicted coordinates, magnitude, and eventually shape')
+    parser.add_argument("--family", '-f',
+                        action="store",
+                        default='all',
+                        help="Asteroid family name. Usually the asteroid number of the largest member.")
+    parser.add_argument("--aperture", '-ap',
+                        action='store',
+                        default=10.0,
+                        help='aperture (degree) of circle for photometry.')
+    parser.add_argument("--thresh", '-t',
+                        action='store',
+                        default=5.0,
+                        help='threshold value for photometry (sigma above background).')
+    parser.add_argument("--object", '-o',
+                        action='store',
+                        default=None,
+                        help='The object to preform photometry on.')
+    parser.add_argument("--filter",
+                        action="store",
+                        default='r',
+                        dest="filter",
+                        choices=['r', 'u'],
+                        help="passband: default is r'")
+    parser.add_argument('--type',
+                        default='p',
+                        choices=['o', 'p', 's'], 
+                        help="restrict type of image (unprocessed, reduced, calibrated)")
+    parser.add_argument('--elim', '-el',
+                        default='0.6',
+                        help="limit on degree of ellipticity")
+                            
+    args = parser.parse_args()
+    
+    select_object(args.family, args.object, float(args.aperture), float(args.thresh), args.filter, args.type, args.elim)
+    
+def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=5.0, filtertype='r', imagetype='p', elim=0.3):
+
+    out_filename = '{}_r{}_t{}_output.txt'.format(familyname, ap, th)
+    with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'w') as outfile:
+        outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('Object', "Image", 'flux', 'mag', 'RA', 'DEC', 'ecc', 'index'))
+    
+    # initiate directories
+    init_dirs(familyname, objectname)
     
     # From the given input, identify the desired filter and rename appropriately
     if filtertype.lower().__contains__('r'):
@@ -56,38 +97,77 @@ def find_objects_by_phot(familyname, objectname, ap=10.0, th=5.0, filtertype='r'
     if filtertype.lower().__contains__('u'):
         filtertype = 'u.MP9301'
     
+    if  os.path.exists('asteroid_families/{}/{}_images.txt'.format(familyname, familyname)):
+        expnum_list = []
+        image_list = []
+        with open(image_list_path) as infile:
+            filestr = infile.read()
+            fileline = filestr.split('\n')
+            for item in fileline[1:]:
+                if len(item.split()) > 0:
+                    image_list.append(item.split()[0])
+                    expnum_list.append(item.split()[1])
+    else:  
+        image_list, expnum_list, ra_list, dec_list = get_image_info(familyname, filtertype, imagetype)
+        
+    if objectname == None:
+        for index, imageobject in enumerate(image_list):
+            print 'Finding asteroid {} in family {} '.format(objectname, familyname)
+            iterate_thru_images(familyname, imageobject, expnum_list[index], ap, th, filtertype, imagetype, elim)    
+    else:  
+        for index, imageobject in enumerate(image_list):
+            if objectname == imageobject:
+                print 'Finding asteroid {} in family {} '.format(objectname, familyname)
+                iterate_thru_images(familyname, objectname, expnum_list[index], ap, th, filtertype, imagetype, elim)
+        
+
+def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap=10.0, th=5.0, filtertype='r', imagetype='p', elim=0.3):
+            
     # initiate directories
-    init_dirs(familyname, objectname)
-    out_filename = '{}_r{}_t{}_output.txt'.format(familyname, ap, th)
+    init_dirs(familyname, objectname)  
+    
+    repeat_list = []  
+        
+    try:        
+        # get range of magnitudes of object over time span that the images were taken
+        print "-- Querying JPL Horizon's ephemeris for apparent magnitudes"
+        urlData, date_start, date_end = query_jpl(familyname, objectname, step=1)
+        mag_list_jpl, RA_3sigma, DEC_3sigma = parse_mag_jpl(urlData, date_start, date_end)
+        
+        
+        RA_3sigma_avg = np.mean(RA_3sigma) / 0.187 # convert from arcseconds to pixels
+        DEC_3sigma_avg = np.mean(DEC_3sigma) / 0.187 
+        if RA_3sigma_avg > DEC_3sigma_avg:
+            r_err = RA_3sigma_avg
+        else:
+            r_err = DEC_3sigma_avg
 
-    with open('{}/{}'.format(stamps_dir, out_filename), 'w') as outfile:
-        outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('Object', "Image", 'flux', 'mag', 'RA', 'DEC', 'ecc'))        
-
-    # get range of magnitudes of object over time span that the images were taken
-    print "----- Querying JPL Horizon's ephemeris for apparent magnitudes -----"
+        if r_err > 0.003:
+            r_err = 0.003
     
-    mag_list_jpl = parse_mag_jpl(objectname, step=1)
-    
-    # preform the photometry and identify object
-    print "----- Preforming photometry on all images of {} in family {} -----".format(objectname, familyname)
-    
+        print r_err
+        
+    except:
+        print "  No images of this object exist"
+        return
+            
     stamp_list = []
+    vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
+    stamps_dir = 'asteroid_families/{}/{}_stamps'.format(familyname, familyname)
     for file in client.listdir(vos_dir):
-    #for file in os.listdir(stamps_dir):
         if file.endswith('.fits') == True:
             objectname_file = file.split('_')[0]
-            if objectname_file == objectname:
+            expnum_file = file.split('_')[1]
+            if expnum_file == expnum_p:
             # images named with convention: object_expnum_RA_DEC.fits
-                expnum_p = file.split('_')[1]
                 stamp_list.append(expnum_p)
                 storage.copy('{}/{}'.format(vos_dir, file), '{}/{}'.format(stamps_dir, file))
                 #assert os.path.exists('{}/{}'.format(vos_dir, file))
                 #with fits.open('{}/{}'.format(vos_dir, file)) as hdulist:
                 with fits.open('{}/{}'.format(stamps_dir, file)) as hdulist:    
-                    print " Preforming photometry on image {} ".format(expnum_p)
-                
-                    if hdulist[0].data is None: # what if more than 2ccd mosaic? could just be aperture values?
-                        try:
+                    print "-- Preforming photometry on image {} ".format(expnum_p)
+                    try:
+                        if hdulist[0].data is None: # what if more than 2ccd mosaic? could just be aperture values?
                             zeropt = fits.getval('{}/{}'.format(stamps_dir, file), 'PHOTZP', 1)
                             exptime = fits.getval('{}/{}'.format(stamps_dir, file), 'EXPTIME', 1)
                             table1 = sep_phot(hdulist[1].data, ap, th)
@@ -95,79 +175,100 @@ def find_objects_by_phot(familyname, objectname, ap=10.0, th=5.0, filtertype='r'
                             table = vstack([table1, table2])
                             #ascii.write(table, os.path.join(stamps_dir, '{}_phot.txt'.format(expnum_p))) # write all phot data to file in directory familyname/famlyname_objectname/sep_phot_output
                             astheader = hdulist[0].header
-                        except LookupError: # maybe not correct error type?
-                            print "ERROR: no PHOTZP in header, skipping image "
-                    
-                    else:
-                        try:
+                             
+                        else:
                             zeropt = fits.getval('{}/{}'.format(stamps_dir, file), 'PHOTZP', 0)
                             exptime = fits.getval('{}/{}'.format(stamps_dir, file), 'EXPTIME', 0)
                             table = sep_phot(hdulist[0].data, ap, th)
                             astheader = hdulist[0].header
                             #ascii.write(table, os.path.join(stamps_dir, '{}_phot.txt'.format(expnum_p))) # write all phot data to file in directory familyname/famlyname_objectname/sep_phot_output
-                        except LookupError:
-                            print "ERROR: no PHOTZP in header, skipping image "
+                            
+                    except LookupError: # maybe not correct error type?
+                        print "ERROR: no PHOTZP in header, skipping image **********"
+                        return
+                    except ValueError, e:
+                        print 'ERROR: {} **********'.format(e)
+                        get_stamps.get_one_stamp(objectname, expnum_p, 0.01, username, password, familyname)
+                        repeat_list.append(expnum_p)
+                        return
                 
-                    pvwcs = wcs.WCS(astheader)
-                    i_list = find_neighbours(table, expnum_p, pvwcs)
-                    good_neighbours, mean = iden_good_neighbours(i_list, table, zeropt, mag_list_jpl, elim, pvwcs)
-                    print good_neighbours
-                    
-                    '''
-                    thingy = daophot_revised(hdulist, zeropt, filtertype, exptime, good_neighbours, ap, swidth=10, apcor=0.3, maxcount=30000.0)
-                    
-                    
-                    object_data = iden_object(good_neighbours, mean)
+                    os.unlink('{}/{}'.format(stamps_dir, file))    
                 
-                    if object_data == None:
-                        print "WARNING: Could not identify object {} in image".format(objectname, expnum_p)
-                    else:
-                        with open('{}/{}'.format(stamps_dir, out_filename), 'a') as outfile:
-                            try:
-                                outfile.write('{} {} {} {} {} {}\n'.format(
-                                          expnum_p, object_data[1], object_data[2], object_data[5], object_data[6], 
-                                          object_data[7]))
-                            except:
-                                print "ERROR: cannot write to outfile"
-                    '''
-               
-                    os.unlink('{}/{}'.format(stamps_dir, file))
+                pvwcs = wcs.WCS(astheader)
+                
+                try:
+                    i_list = find_neighbours(table, expnum_p, pvwcs, r_err)
+                    #good_neighbours, mean = iden_good_neighbours(i_list, table, zeropt, mag_list_jpl, elim, pvwcs)
+                    object_data, mean = iden_good_neighbours(i_list, table, zeropt, mag_list_jpl, elim, pvwcs)
+                    print object_data
+                except TypeError, e:
+                    return
+                except ValueError:
+                    print 'WARNING: Only one object in image'
+                    get_stamps.get_one_stamp(objectname, expnum_p, 0.01, username, password, familyname)
+                    repeat_list.append(expnum_p)
+                    return repeat_list
+                #object_data = iden_object(good_neighbours, mean)
     
-    if len(stamp_list) == 0:
-        print "WARNING: No stamps found"
+                out_filename = '{}_r{}_t{}_output.txt'.format(familyname, ap, th)
+                if object_data is None:
+                    print "WARNING: Could not identify object {} in image".format(objectname, expnum_p)
+                else:
+                    with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'a') as outfile:
+                        try:
+                            for i in range(0, len(object_data)-1):
+                                #'Object', "Image", 'flux', 'mag', 'RA', 'DEC', 'ecc', 'index'
+                                outfile.write('{} {} {} {} {} {} {} {}\n'.format(
+                                      objectname, expnum_p, object_data[i][1], object_data[i][2], object_data[i][5], object_data[i][6], 
+                                      object_data[i][7], object_data[i][0]))
+                        except:
+                            print "ERROR: cannot write to outfile <<<<<<<<<<<<<<<<<<<<<<<<<<"
                 
-def query_jpl(objectname, step=1, su='d'):
+                    return object_data, repeat_list
+                
+    if len(stamp_list) == 0:
+        print "WARNING: no stamps exist"    
+                            
+def query_jpl(familyname, objectname, step=1, su='d', params=[9, 36]):
     '''
     Constructs a URL to query JPL Horizon's for apparent magnitude in a date range
     '''
+    
+    if type(objectname) is not str:
+        objectname = str(objectname)
+    
     # from familyname_images.txt get date range of images for objectname
     date_range = []
-    with open('{}/{}'.format(family_dir, imageinfo)) as infile:
+    with open('asteroid_families/{}/{}_images.txt'.format(familyname, familyname)) as infile:
         for line in infile.readlines()[1:]:
-            assert len(line.split()) > 0
-            if objectname == line.split()[0]:
-                date_range.append(float(line.split()[5]))
-                
-    if len(date_range) == 0:
-        print "WARNING: No images of this object exist"
-        assert len(date_range) != 0
-        
+            if len(line.split()) > 0:
+                if objectname == line.split()[0]:
+                    date_range.append(float(line.split()[5]))   
+                    
     date_range_t = Time(date_range, format='mjd', scale='utc')
     assert  len(date_range_t.iso) > 0
     time_start = ((date_range_t.iso[0]).split())[0] + ' 00:00:00.0'
     time_end = ((date_range_t.iso[-1]).split())[0] + ' 00:00:00.0'
-    
+
     if time_start == time_end:
         time_end = add_day(time_end, date_range_t)
-    
+
     print " Date range in query: {} -- {}".format(time_start, time_end)
-    
+
     # change date format from 01-01-2001 00:00 to 01-Jan-2001 00:00
     date_start = change_date(time_start)
     date_end = change_date(time_end)
-    
-    s = '9' # select parameter for apparent magnitude
-    
+
+    # Construct the query url
+    s = "'"
+    if not params:
+        for i in range(1, 40):  # There are 40 possible pieces of info that Horizons can give back
+            s += str(i) + ','
+            s += "40'"  # python leaves one off the end in range()
+    else:
+        for p in params:
+            s += "{},".format(p)
+
     # form URL pieces that Horizon needs for its processing instructions
     urlArr = ["http://ssd.jpl.nasa.gov/horizons_batch.cgi?batch=1&COMMAND=",
               '',
@@ -179,7 +280,7 @@ def query_jpl(objectname, step=1, su='d'):
               '',
               "&QUANTITIES=" + s,
               "&CSV_FORMAT='YES'"]
-              
+          
     # change the object name, start and end times, and time step into proper url-formatting
     url_style_output = []
     for obj in [objectname, time_start, time_end]:
@@ -190,14 +291,14 @@ def query_jpl(objectname, step=1, su='d'):
             ob =  "'" + objectname + "'"
         url_style_output.append(ob)
     step = "'" + str(step) + "%20" + su + "'"
-     
+ 
     # URL components
     urlArr[1] = url_style_output[0]  # formatted object name
     urlArr[3] = url_style_output[1]  # start time
     urlArr[5] = url_style_output[2]  # end time
     urlArr[7] = step  # timestep   
     urlStr = "".join(urlArr)  # create the url to pass to Horizons
-       
+   
     # Query Horizons; if it's busy, wait and try again in a minute
     done = 0
     while not done:
@@ -213,12 +314,11 @@ def query_jpl(objectname, step=1, su='d'):
                 time.sleep(60)
         else:
             done = 1   
-            
-    return urlData, date_start, date_end
+        
+    return urlData, date_start, date_end    
+        
 
-def parse_mag_jpl(objectname, step=1):
-    
-    urlData, date_start, date_end = query_jpl(objectname, step=1)
+def parse_mag_jpl(urlData, date_start, date_end):
     
     # parse through urlData for indexes of start and end dates    
     index_end = None
@@ -247,15 +347,19 @@ def parse_mag_jpl(objectname, step=1):
         
     # for indexes from start to end dates, get apparent magnitude values
     mag_list = []
+    RA_3sigma = []
+    DEC_3sigma = []
     for line in urlData[index_start:index_end+1]:
         assert len(line.split()) > 0 
         try:
             mag_list.append(float((line.split()[4]).strip(',')))
+            RA_3sigma.append(float((line.split()[5]).strip(',')))
+            DEC_3sigma.append(float((line.split()[6]).strip(',')))
         except:
             print "WARNING: could not get magnitude from JPL line"
     
     assert len(mag_list) > 0
-    return mag_list
+    return mag_list, RA_3sigma, DEC_3sigma
        
 def change_date(date):
     '''
@@ -306,13 +410,10 @@ def sep_phot(data, ap, th):
     table = Table([objs['x'], objs['y'], flux, objs['a'], objs['b']], names=('x', 'y', 'flux', 'a', 'b'))
     return table
 
-def find_neighbours(septable, expnum_p, pvwcs):
+def find_neighbours(septable, expnum_p, pvwcs, r_err):
     '''
-    Computes the nearest neighbours to predicted coordinates, should eventually find all those in uncertainty ellipse
+    Computes the nearest neighbours to predicted coordinates within an RA/DEC uncertainty circle
     '''
-    num_neighbours = 25
-    if num_neighbours > len(septable):
-        num_neighbours = len(septable)
     
     tree = cKDTree(zip((np.array(septable['x'])).ravel(), (np.array(septable['y'])).ravel()))
     
@@ -334,7 +435,7 @@ def find_neighbours(septable, expnum_p, pvwcs):
                 
                 # parse through table and get RA and DEC closest to predicted coordinates (in pixels)
                 coords = np.array([pRA_pix, pDEC_pix])
-                d_list, i_list = tree.query(coords, num_neighbours)
+                i_list = tree.query_ball_point(coords, r_err)
                 
                 return i_list
 
@@ -415,9 +516,10 @@ def iden_good_neighbours(i_list, septable, zeropt, mag_list_jpl, elim, pvwcs):
                 names=('index', 'flux', 'mag', 'x', 'y', 'RA', 'DEC', 'ecc'))
                     
     if mRA_pix == None:
-        print "WARNING: Magnitude condition could not be satisfied"
+        print "WARNING: Magnitude condition could not be satisfied **********"
         print '  {}'.format(i_list)
-        print "  {} {} {}".format(i, mean, all_mag)
+        #print "  {} {}".format(mean, all_mag)
+        return
         
     else: 
         #print "   Flux, mag: {}, {}".format(flux, mag_sep)     
@@ -447,131 +549,11 @@ def iden_object(good_neighbours, mean):
     the_object = good_neighbours[0]
     return the_object     
     
-def daophot_revised(fits_filename, zeropt, filtertype, exptime, good_neighbours, ap, swidth, apcor, maxcount):
-    """
-    Compute the centroids and magnitudes of a bunch sources detected on CFHT-MEGAPRIME images.
-    Args:
-      fits_filename: str  -- The name of the file containing the image to be processed.
-    Returns:
-      a MOPfiles data structure.
-    """
-          
-    x_in = good_neighbours['x'][0]
-    y_in = good_neighbours['y'][0]
-
-    # setup IRAF to do the magnitude/centroid measurements
-    iraf.set(uparm="./")
-    iraf.digiphot()
-    iraf.apphot()
-    iraf.daophot(_doprint=0)
-
-    iraf.photpars.apertures = ap
-    iraf.photpars.zmag = zeropt
-    iraf.datapars.datamin = 0
-    iraf.datapars.datamax = maxcount
-    iraf.datapars.exposur = ""
-    iraf.datapars.itime = exptime
-    iraf.fitskypars.annulus = ap + 5
-    iraf.fitskypars.dannulus = swidth
-    iraf.fitskypars.salgorithm = "mode"
-    iraf.fitskypars.sloclip = 5.0
-    iraf.fitskypars.shiclip = 5.0
-    iraf.centerpars.calgori = "centroid"
-    iraf.centerpars.cbox = 5.
-    iraf.centerpars.cthreshold = 0.
-    iraf.centerpars.maxshift = 3.
-    iraf.centerpars.clean = 'no'
-    iraf.phot.update = 'no'
-    iraf.phot.verbose = 'no'
-    iraf.phot.verify = 'no'
-    iraf.phot.interactive = 'no'
-
-    # Used for passing the input coordinates
-    coofile = tempfile.NamedTemporaryFile(suffix=".coo", delete=False)
-    coofile.write('{} {}\n'.format(x_in, y_in))
-
-    # Used for receiving the results of the task
-    # mag_fd, mag_path = tempfile.mkstemp(suffix=".mag")
-    magfile = tempfile.NamedTemporaryFile(suffix=".mag", delete=False)
-
-    # Close the temp files before sending to IRAF due to docstring:
-        # "Whether the name can be used to open the file a second time, while the named temporary file is still open, varies across platforms"
-    coofile.close()
-    magfile.close()
-    os.remove(magfile.name)
-
-    iraf.phot(fits_filename, coofile.name, magfile.name)
-
-    # TODO: Move this filtering downstream to the user.
-    phot_filter = "PIER==0 && CIER==0 && SIER==0"
-
-    pdump_out = iraf.pdump(magfile.name, "XCENTER,YCENTER,MAG,MERR,ID,XSHIFT,YSHIFT,LID",
-                           phot_filter, header='no', parameters='yes',
-                           Stdout=1)
-
-    if not len(pdump_out) > 0:
-        mag_content = open(magfile.name).read()
-        raise TaskError("photometry failed. {}".format(mag_content))
-
-    os.remove(coofile.name)
-    os.remove(magfile.name)
-
-    # setup the mop output file structure
-    hdu = {}
-    hdu['header'] = {'image': fits_filename,
-                     'aper': ap,
-                     's_aper': sky,
-                     'd_s_aper': swidth,
-                     'aper_cor': apcor,
-                     'zeropoint': zeropt}
-    hdu['order'] = ['X', 'Y', 'MAG', 'MERR', 'ID', 'XSHIFT', 'YSHIFT', 'LID']
-    hdu['format'] = {'X': '%10.2f',
-                     'Y': '%10.2f',
-                     'MAG': '%10.2f',
-                     'MERR': '%10.2f',
-                     'ID': '%8d',
-                     'XSHIFT': '%10.2f',
-                     'YSHIFT': '%10.2f',
-                     'LID': '%8d'}
-    hdu['data'] = {}
-    for col in hdu['order']:
-        hdu['data'][col] = []
-
-    for line in pdump_out:
-        values = line.split()
-        for col in hdu['order']:
-            if re.match('\%.*f', hdu['format'][col]):
-                if col == 'MAG':
-                    values[0] = float(values[0]) - float(apcor)
-                hdu['data'][col].append(float(values.pop(0)))
-            elif re.match('\%.*d', hdu['format'][col]):
-                hdu['data'][col].append(int(values.pop(0)))
-            else:
-                hdu['data'][col].append(values.pop(0))
-
-    # Clean up temporary files generated by IRAF
-    os.remove("datistabe.par")
-    os.remove("datpdump.par")
-
-    return hdu
-
-
-def phot_mag(*args, **kwargs):
-    """Wrapper around phot which only returns the computed magnitude directly."""
-    hdu = phot(*args, **kwargs)
-
-    try:
-        return hdu["data"]["X"][0], hdu["data"]["Y"][0], hdu["data"]["MAG"][0], hdu["data"]["MERR"][0],
-    except IndexError:
-        raise TaskError("Photometry cannot be performed.  "+str(hdu))
-
-    
 
 def init_dirs(familyname, objectname):
     
     global imageinfo
-    imageinfo = familyname+'_images_test.txt' # FOR TESTING, CALLS TEST FILE
-    print "WARNING: Using test file"
+    imageinfo = '{}_images.txt'.format(familyname)
     
     # initiate vos directories 
     global vos_dir
@@ -608,57 +590,7 @@ def add_day(time_end, date_range_t):
         return time_end
         
         
-def main(): 
-    
-    parser = argparse.ArgumentParser(
-                        description='For a given set of fits images, \
-                         preforms photometry on a specified object given an aperture size and threshold, \
-                        and then selects the object in the image from the predicted coordinates, magnitude, and eventually shape')
-    parser.add_argument("--family", '-f',
-                        action="store",
-                        default=None,
-                        help="Asteroid family name. Usually the asteroid number of the largest member.")
-    parser.add_argument("--aperture", '-ap',
-                        action='store',
-                        default=10.0,
-                        help='aperture (degree) of circle for photometry.')
-    parser.add_argument("--thresh", '-t',
-                        action='store',
-                        default=5.0,
-                        help='threshold value for photometry (sigma above background).')
-    parser.add_argument("--object", '-o',
-                        action='store',
-                        default=None,
-                        help='The object to preform photometry on.')
-    parser.add_argument("--filter",
-                        action="store",
-                        default='r',
-                        dest="filter",
-                        choices=['r', 'u'],
-                        help="passband: default is r'")
-    parser.add_argument('--type',
-                        default='p',
-                        choices=['o', 'p', 's'], 
-                        help="restrict type of image (unprocessed, reduced, calibrated)")
-    parser.add_argument('--elim', '-el',
-                        default='0.4',
-                        help="restrict type of image (unprocessed, reduced, calibrated)")
-                            
-    args = parser.parse_args()
-    
-    if args.family == None:
-        familyname = 'all'
-        all_images = pd.read_table('asteroid_families/all/all_images_test.txt') # FOR TESTING, CALLS TEST FILE
-        object_list = all_images['Object'].values
-        for objectname in object_list:
-            find_objects_by_phot(familyname, str(objectname), float(args.aperture), float(args.thresh), args.filter, args.type, args.elim)
-    else:
-        if args.object == None:
-            object_list = find_family_members(args.family)
-            for objectname in object_list:
-                find_objects_by_phot(args.family, objectname, float(args.aperture), float(args.thresh), args.filter, args.type, args.elim)
-        else:        
-            find_objects_by_phot(args.family, args.object, float(args.aperture), float(args.thresh), args.filter, args.type, args.elim)
+
     
 if __name__ == '__main__':
     main()
