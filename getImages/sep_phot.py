@@ -58,7 +58,7 @@ def main():
                         help='aperture (degree) of circle for photometry.')
     parser.add_argument("--thresh", '-t',
                         action='store',
-                        default=5.0,
+                        default=3.5,
                         help='threshold value for photometry (sigma above background).')
     parser.add_argument("--object", '-o',
                         action='store',
@@ -82,7 +82,7 @@ def main():
     
     select_object(args.family, args.object, float(args.aperture), float(args.thresh), args.filter, args.type, args.elim)
     
-def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=5.0, filtertype='r', imagetype='p', elim=0.3):
+def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=3.5, filtertype='r', imagetype='p', elim=0.3):
 
     out_filename = '{}_r{}_t{}_output.txt'.format(familyname, ap, th)
     with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'w') as outfile:
@@ -125,98 +125,123 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
             
     # initiate directories
     init_dirs(familyname, objectname)  
-    
-    repeat_list = []  
-        
+            
     try:        
         # get range of magnitudes of object over time span that the images were taken
-        print "-- Querying JPL Horizon's ephemeris for apparent magnitudes"
         urlData, date_start, date_end = query_jpl(familyname, objectname, step=1)
-        mag_list_jpl, RA_3sigma, DEC_3sigma = parse_mag_jpl(urlData, date_start, date_end)
-        
-        
-        RA_3sigma_avg = np.mean(RA_3sigma) / 0.187 # convert from arcseconds to pixels
-        DEC_3sigma_avg = np.mean(DEC_3sigma) / 0.187 
-        if RA_3sigma_avg > DEC_3sigma_avg:
-            r_err = RA_3sigma_avg
-        else:
-            r_err = DEC_3sigma_avg
-
-        if r_err > 0.003:
-            r_err = 0.003
-    
-        print r_err
-        
+        mag_list_jpl, r_err, e_jpl = parse_mag_jpl(urlData, date_start, date_end)
     except:
         print "  No images of this object exist"
         return
-            
-    stamp_list = []
-    vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
-    stamps_dir = 'asteroid_families/{}/{}_stamps'.format(familyname, familyname)
-    for file in client.listdir(vos_dir):
+    
+    print "-- Preforming photometry on image {} ".format(expnum_p)  
+    stamp_found = False      
+    for file in client.listdir(vos_dir): # images named with convention: object_expnum_RA_DEC.fits
         if file.endswith('.fits') == True:
             objectname_file = file.split('_')[0]
             expnum_file = file.split('_')[1]
-            if expnum_file == expnum_p:
-            # images named with convention: object_expnum_RA_DEC.fits
-                stamp_list.append(expnum_p)
+            if (expnum_file == expnum_p) and (objectname_file == objectname):
+                stamp_found = True
                 storage.copy('{}/{}'.format(vos_dir, file), '{}/{}'.format(stamps_dir, file))
-                #assert os.path.exists('{}/{}'.format(vos_dir, file))
-                #with fits.open('{}/{}'.format(vos_dir, file)) as hdulist:
-                with fits.open('{}/{}'.format(stamps_dir, file)) as hdulist:    
-                    print "-- Preforming photometry on image {} ".format(expnum_p)
-                    try:
-                        if hdulist[0].data is None: # what if more than 2ccd mosaic? could just be aperture values?
-                            zeropt = fits.getval('{}/{}'.format(stamps_dir, file), 'PHOTZP', 1)
-                            exptime = fits.getval('{}/{}'.format(stamps_dir, file), 'EXPTIME', 1)
-                            table1 = sep_phot(hdulist[1].data, ap, th)
-                            table2 = sep_phot(hdulist[2].data, ap, th)
-                            table = vstack([table1, table2])
-                            #ascii.write(table, os.path.join(stamps_dir, '{}_phot.txt'.format(expnum_p))) # write all phot data to file in directory familyname/famlyname_objectname/sep_phot_output
-                            astheader = hdulist[0].header
+                try:
+                    with fits.open('{}/{}'.format(stamps_dir, file)) as hdulist: 
+                        pvwcs = wcs.WCS(hdulist[0].header)
+                        try:
+                            if hdulist[0].data is None:
+                                zeropt = fits.getval('{}/{}'.format(stamps_dir, file), 'PHOTZP', 1)
+                                exptime = fits.getval('{}/{}'.format(stamps_dir, file), 'EXPTIME', 1)
+                                size = (hdulist[1].header)['NAXIS1'] + (hdulist[2].header)['NAXIS1']
+                                table1 = sep_phot(hdulist[1].data, ap, th)
+                                table2 = sep_phot(hdulist[2].data, ap, th)
+                                table = vstack([table1, table2])
+                                #ascii.write(table, os.path.join(stamps_dir, '{}_phot.txt'.format(expnum_p))) 
                              
-                        else:
-                            zeropt = fits.getval('{}/{}'.format(stamps_dir, file), 'PHOTZP', 0)
-                            exptime = fits.getval('{}/{}'.format(stamps_dir, file), 'EXPTIME', 0)
-                            table = sep_phot(hdulist[0].data, ap, th)
-                            astheader = hdulist[0].header
-                            #ascii.write(table, os.path.join(stamps_dir, '{}_phot.txt'.format(expnum_p))) # write all phot data to file in directory familyname/famlyname_objectname/sep_phot_output
+                            else:
+                                zeropt = fits.getval('{}/{}'.format(stamps_dir, file), 'PHOTZP', 0)
+                                size = (hdulist[0].header)['NAXIS1']
+                                exptime = fits.getval('{}/{}'.format(stamps_dir, file), 'EXPTIME', 0)
+                                table = sep_phot(hdulist[0].data, ap, th)
+                                #ascii.write(table, os.path.join(stamps_dir, '{}_phot.txt'.format(expnum_p))) 
                             
-                    except LookupError: # maybe not correct error type?
-                        print "ERROR: no PHOTZP in header, skipping image **********"
-                        return
-                    except ValueError, e:
-                        print 'ERROR: {} **********'.format(e)
-                        get_stamps.get_one_stamp(objectname, expnum_p, 0.01, username, password, familyname)
-                        repeat_list.append(expnum_p)
-                        return
+                        except LookupError: # maybe not correct error type?
+                            print "ERROR: no PHOTZP in header, skipping image **********"
+                            return
+                        except ValueError, e:
+                            print 'ERROR: {} **********'.format(e)
+                            get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
+                            return
                 
                     os.unlink('{}/{}'.format(stamps_dir, file))    
                 
-                pvwcs = wcs.WCS(astheader)
-                
-                try:
-                    i_list = find_neighbours(table, expnum_p, pvwcs, r_err)
-                    #good_neighbours, mean = iden_good_neighbours(i_list, table, zeropt, mag_list_jpl, elim, pvwcs)
-                    object_data, mean = iden_good_neighbours(i_list, table, zeropt, mag_list_jpl, elim, pvwcs)
-                    print object_data
-                except TypeError, e:
+                except IOError, e:
+                    print 'ERROR: {} **********'.format(e)
+                    get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
                     return
-                except ValueError:
-                    print 'WARNING: Only one object in image'
-                    get_stamps.get_one_stamp(objectname, expnum_p, 0.01, username, password, familyname)
-                    repeat_list.append(expnum_p)
-                    return repeat_list
-                #object_data = iden_object(good_neighbours, mean)
+                    
+                enough = check_num_stars(table, size)
+                if enough == False:
+                    return
+                                
+    try:
+        i_list = find_neighbours(table, expnum_p, pvwcs, r_err)
+        if len(i_list) == 0:
+            i_list = find_neighbours(table, expnum_p, pvwcs, 1.5*r_err)
+            if len(i_list) == 0:
+                print 'WARNING: No nearest neighbours were found within {} ++++++++++++++++++++++'.format(r_err*1.5)
+                ascii.write(table, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum_p))
+                return
+                            
+        good_neighbours, mean = iden_good_neighbours(expnum_p, i_list, table, zeropt, mag_list_jpl, e_jpl, pvwcs)
+        print good_neighbours
+        
+        print_output(familyname, objectname, expnum_p, good_neighbours, ap, th)
+        return good_neighbours
+        
+    except TypeError, e:
+        return
+    except ValueError:
+        print 'WARNING: Only one object in image'
+        get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
+        return            
+                                    
+    if stamp_found == False:
+        print "WARNING: no stamps exist"
+        get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
+
+def check_num_stars(table, size):
+        
+    # r_old = size * 0.184 / 3600
+    # r_new = r_old + 0.05
     
-                out_filename = '{}_r{}_t{}_output.txt'.format(familyname, ap, th)
+    enough = True
+    
+    if size < 200:
+        r_new = 0.02
+    if 200 < size < 500:
+        r_new = 0.03
+    if size > 500:
+        print 'SIZE IS AT MAX (), check to see if correct <<<<<<<<<<<<<<<<<<<'.format(size)
+        r_new = 0.04
+    
+    print '  Number of objects in image: {}'.format(len(table))
+    if 0 < len(table) < 30:
+        enough = False
+        print 'Not enough stars () in the stamp ////////////////////////////////'.format(len(table))                    
+        if size < 500:   
+            get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
+    
+    return enough
+        
+def print_output(familyname, objectname, expnum_p, object_data, ap, th):
+
                 if object_data is None:
                     print "WARNING: Could not identify object {} in image".format(objectname, expnum_p)
+                    
                 else:
+                    out_filename = '{}_r{}_t{}_output.txt'.format(familyname, ap, th)
                     with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'a') as outfile:
                         try:
-                            for i in range(0, len(object_data)-1):
+                            for i in range(0, len(object_data)):
                                 #'Object', "Image", 'flux', 'mag', 'RA', 'DEC', 'ecc', 'index'
                                 outfile.write('{} {} {} {} {} {} {} {}\n'.format(
                                       objectname, expnum_p, object_data[i][1], object_data[i][2], object_data[i][5], object_data[i][6], 
@@ -224,15 +249,14 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
                         except:
                             print "ERROR: cannot write to outfile <<<<<<<<<<<<<<<<<<<<<<<<<<"
                 
-                    return object_data, repeat_list
-                
-    if len(stamp_list) == 0:
-        print "WARNING: no stamps exist"    
+                    return object_data
                             
-def query_jpl(familyname, objectname, step=1, su='d', params=[9, 36]):
+def query_jpl(familyname, objectname, step=1, su='d', params=[3, 9, 36]):
     '''
     Constructs a URL to query JPL Horizon's for apparent magnitude in a date range
     '''
+    
+    print "-- Querying JPL Horizon's ephemeris for apparent magnitudes"
     
     if type(objectname) is not str:
         objectname = str(objectname)
@@ -346,20 +370,40 @@ def parse_mag_jpl(urlData, date_start, date_end):
         index_end = 70
         
     # for indexes from start to end dates, get apparent magnitude values
+    a_list = []
+    b_list = []
     mag_list = []
     RA_3sigma = []
     DEC_3sigma = []
     for line in urlData[index_start:index_end+1]:
         assert len(line.split()) > 0 
         try:
-            mag_list.append(float((line.split()[4]).strip(',')))
-            RA_3sigma.append(float((line.split()[5]).strip(',')))
-            DEC_3sigma.append(float((line.split()[6]).strip(',')))
+            a_list.append(float((line.split()[3]).strip(',')))
+            b_list.append(float((line.split()[4]).strip(',')))
+            mag_list.append(float((line.split()[5]).strip(',')))
+            RA_3sigma.append(float((line.split()[6]).strip(',')))
+            DEC_3sigma.append(float((line.split()[7]).strip(',')))
         except:
             print "WARNING: could not get magnitude from JPL line"
     
     assert len(mag_list) > 0
-    return mag_list, RA_3sigma, DEC_3sigma
+    
+    RA_3sigma_avg = np.mean(RA_3sigma) / 0.184 # convert from arcseconds to pixels
+    DEC_3sigma_avg = np.mean(DEC_3sigma) / 0.184 
+    if RA_3sigma_avg > DEC_3sigma_avg:
+        r_err = RA_3sigma_avg
+    else:
+        r_err = DEC_3sigma_avg
+
+    if r_err < 30: # 0.003 deg * 3600 "/deg / 0.187 "/pix
+        r_err = 30
+    
+    a_avg = np.mean(a_list)
+    b_avg = np.mean(b_list)
+    
+    e = (1-(b_avg/a_avg)**2)**0.5
+    
+    return mag_list, r_err, e
        
 def change_date(date):
     '''
@@ -436,17 +480,17 @@ def find_neighbours(septable, expnum_p, pvwcs, r_err):
                 # parse through table and get RA and DEC closest to predicted coordinates (in pixels)
                 coords = np.array([pRA_pix, pDEC_pix])
                 i_list = tree.query_ball_point(coords, r_err)
-                
+            
                 return i_list
 
-def iden_good_neighbours(i_list, septable, zeropt, mag_list_jpl, elim, pvwcs):
+def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, e_jpl, pvwcs):
     '''
     Selects nearest neighbour object from predicted coordinates as object of interest
     In order:
         Compares measured apparent magnitude to predicted, passes if in range of values
         Calculates eccentricity, passes if greater than minimum value that is inputted
     '''
-    
+        
     mRA_pix = None
     mag_sep_list = []
     all_mag = []
@@ -457,6 +501,15 @@ def iden_good_neighbours(i_list, septable, zeropt, mag_list_jpl, elim, pvwcs):
     ecc_list = []
     x_list = []
     y_list = []
+    
+    mean = np.mean(mag_list_jpl)
+    maxmag = np.amax(mag_list_jpl)
+    minmag = np.amin(mag_list_jpl)
+    
+    if ( 2 > maxmag - minmag):
+        magrange = 2
+    else:
+        magrange = maxmag - minmag
         
     for i in i_list:
         flux = septable[i][2]
@@ -468,19 +521,11 @@ def iden_good_neighbours(i_list, septable, zeropt, mag_list_jpl, elim, pvwcs):
 
         if flux > 0:
             mag_sep = -2.5*math.log10(flux)+zeropt
-            mean = np.mean(mag_list_jpl)
-            maxmag = np.amax(mag_list_jpl)
-            minmag = np.amin(mag_list_jpl)
             all_mag.append(mag_sep)
         
-            if ( 2 > maxmag - minmag):
-                magrange = 2
-            else:
-                magrange = maxmag - minmag
-                    
             # apply both eccentricity and magnitude conditions
             try:
-                if (abs(mag_sep - mean) < magrange) & (ecc > float(elim)):
+                if (abs(mag_sep - mean) < magrange) & (float(elim) - 1 < ecc < float(elim) + 0.1):
                     mRA_pix = septable[i][0]
                     mDEC_pix = septable[i][1]
                     
@@ -492,6 +537,8 @@ def iden_good_neighbours(i_list, septable, zeropt, mag_list_jpl, elim, pvwcs):
                     ecc_list.append(ecc)
                     x_list.append(x)
                     y_list.append(y)
+                else: 
+                    print '  Both magnitude and eccentricity condition not satisfied'
         
             # if not both, try each
             except:              
@@ -508,17 +555,20 @@ def iden_good_neighbours(i_list, septable, zeropt, mag_list_jpl, elim, pvwcs):
                     x_list.append(x)
                     y_list.append(y)
                     
-                    if ecc < 0.5:
-                        print "Eccentricity is low: {}".format(ecc)        
+                    print "Eccentricity is outside range: calculated, {}, measured, {}".format(e_jpl, ecc)        
     
-    # write to ascii table
     good_neighbours = Table([index_list, flux_list, mag_sep_list, x_list, y_list, mRA_pix_list, mDEC_pix_list, ecc_list], 
                 names=('index', 'flux', 'mag', 'x', 'y', 'RA', 'DEC', 'ecc'))
                     
+    if len(all_mag) == 0:
+        print "WARNING: Flux of nearest neighbours measured to be 0.0 00000000000000000000"
+        return
+    
     if mRA_pix == None:
-        print "WARNING: Magnitude condition could not be satisfied **********"
-        print '  {}'.format(i_list)
-        #print "  {} {}".format(mean, all_mag)
+        print "WARNING: Magnitude condition could not be satisfied 000000000000000000000"
+        print '  Nearest neighbour list: {}'.format(i_list)
+        print "  Mag mean, accepted error, and fitting mags: {} {} {} ".format(mean, magrange, all_mag)
+        ascii.write(septable, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum))
         return
         
     else: 
