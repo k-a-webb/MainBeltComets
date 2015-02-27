@@ -124,7 +124,7 @@ def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=3.5, filtertyp
 def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap=10.0, th=5.0, filtertype='r', imagetype='p', elim=0.3):
             
     # initiate directories
-    init_dirs(familyname, objectname)  
+    init_dirs(familyname, objectname) 
             
     try:        
         # get range of magnitudes of object over time span that the images were taken
@@ -182,74 +182,33 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
                 if enough == False:
                     return
                                 
-    try:
-        i_list = find_neighbours(table, expnum_p, pvwcs, r_err)
-        if len(i_list) == 0:
-            i_list = find_neighbours(table, expnum_p, pvwcs, 1.5*r_err)
-            if len(i_list) == 0:
-                print 'WARNING: No nearest neighbours were found within {} ++++++++++++++++++++++'.format(r_err*1.5)
-                ascii.write(table, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum_p))
-                return
+                try:
+                    i_list = find_neighbours(table, expnum_p, pvwcs, r_err)
+                    if len(i_list) == 0:
+                        i_list = find_neighbours(table, expnum_p, pvwcs, 1.5*r_err)
+                        if len(i_list) == 0:
+                            print 'WARNING: No nearest neighbours were found within {} ++++++++++++++++++++++'.format(r_err*1.5)
+                            ascii.write(table, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum_p))
+                            return
                             
-        good_neighbours, mean = iden_good_neighbours(expnum_p, i_list, table, zeropt, mag_list_jpl, e_jpl, pvwcs)
-        print good_neighbours
+                    good_neighbours, mean = iden_good_neighbours(expnum_p, i_list, table, zeropt, mag_list_jpl, e_jpl, pvwcs)
+                    print good_neighbours
         
-        print_output(familyname, objectname, expnum_p, good_neighbours, ap, th)
-        return good_neighbours
+                    print_output(familyname, objectname, expnum_p, good_neighbours, ap, th)
+                    return good_neighbours
         
-    except TypeError, e:
-        return
-    except ValueError:
-        print 'WARNING: Only one object in image'
-        get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
-        return            
+                except TypeError, e:
+                    return
+                except ValueError:
+                    print 'WARNING: Only one object in image'
+                    get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
+                    return
                                     
     if stamp_found == False:
         print "WARNING: no stamps exist"
         get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
-
-def check_num_stars(table, size):
         
-    # r_old = size * 0.184 / 3600
-    # r_new = r_old + 0.05
-    
-    enough = True
-    
-    if size < 200:
-        r_new = 0.02
-    if 200 < size < 500:
-        r_new = 0.03
-    if size > 500:
-        print 'SIZE IS AT MAX (), check to see if correct <<<<<<<<<<<<<<<<<<<'.format(size)
-        r_new = 0.04
-    
-    print '  Number of objects in image: {}'.format(len(table))
-    if 0 < len(table) < 30:
-        enough = False
-        print 'Not enough stars () in the stamp ////////////////////////////////'.format(len(table))                    
-        if size < 500:   
-            get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
-    
-    return enough
-        
-def print_output(familyname, objectname, expnum_p, object_data, ap, th):
 
-                if object_data is None:
-                    print "WARNING: Could not identify object {} in image".format(objectname, expnum_p)
-                    
-                else:
-                    out_filename = '{}_r{}_t{}_output.txt'.format(familyname, ap, th)
-                    with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'a') as outfile:
-                        try:
-                            for i in range(0, len(object_data)):
-                                #'Object', "Image", 'flux', 'mag', 'RA', 'DEC', 'ecc', 'index'
-                                outfile.write('{} {} {} {} {} {} {} {}\n'.format(
-                                      objectname, expnum_p, object_data[i][1], object_data[i][2], object_data[i][5], object_data[i][6], 
-                                      object_data[i][7], object_data[i][0]))
-                        except:
-                            print "ERROR: cannot write to outfile <<<<<<<<<<<<<<<<<<<<<<<<<<"
-                
-                    return object_data
                             
 def query_jpl(familyname, objectname, step=1, su='d', params=[3, 9, 36]):
     '''
@@ -580,26 +539,50 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, e_jpl, 
         
         return good_neighbours, mean 
         
-def iden_object(good_neighbours, mean):
-    
-    '''
-    mag_diff = []
-    for objects in good_neighbours:
-        mag = objects[2]
-        mag_diff.append(mean - mag)
+def check_num_stars(table, size):
         
-    min_mag = np.amin(mag_diff)
+    # r_old = size * 0.184 / 3600
+    # r_new = r_old + 0.05
     
-    for objects in good_neighbours:
-        mag = objects[2]
-        if mag == (mean - min_mag):
-            the_object = objects
-    #print the_object
-    '''
-    the_object = good_neighbours[0]
-    return the_object     
+    enough = True
     
+    if size < 200:
+        r_new = 0.02
+    if 200 < size < 500:
+        r_new = 0.03
+    if size > 500:
+        r_new = 0.04
+    
+    print '  Number of objects in image: {}'.format(len(table))
+    if 0 < len(table) < 30:
+        enough = False
+        print 'Not enough stars () in the stamp ////////////////////////////////'.format(len(table))                    
+        if size < 500:   
+            get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
+        if size > 500:
+            print 'SIZE IS AT MAX ({}) and not enough stars <<<<<<<<<<<<<<<<<<<'.format(size)
+    
+    return enough 
+    
+def print_output(familyname, objectname, expnum_p, object_data, ap, th):
 
+                if object_data is None:
+                    print "WARNING: Could not identify object {} in image".format(objectname, expnum_p)
+                    
+                else:
+                    out_filename = '{}_r{}_t{}_output.txt'.format(familyname, ap, th)
+                    with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'a') as outfile:
+                        try:
+                            for i in range(0, len(object_data)):
+                                #'Object', "Image", 'flux', 'mag', 'RA', 'DEC', 'ecc', 'index'
+                                outfile.write('{} {} {} {} {} {} {} {}\n'.format(
+                                      objectname, expnum_p, object_data[i][1], object_data[i][2], object_data[i][5], object_data[i][6], 
+                                      object_data[i][7], object_data[i][0]))
+                        except:
+                            print "ERROR: cannot write to outfile <<<<<<<<<<<<<<<<<<<<<<<<<<"
+                
+                    return object_data
+                    
 def init_dirs(familyname, objectname):
     
     global imageinfo
