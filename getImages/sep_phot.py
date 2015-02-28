@@ -137,8 +137,8 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
         return
     '''
     print "-- Querying JPL Horizon's ephemeris"
-    e_jpl = query_jpl_ecc(familyname, objectname, expnum_p)
-    mag_list_jpl, r_err = query_jpl(familyname, objectname)
+    e_jpl = get_ecc(familyname, objectname, expnum_p)
+    mag_list_jpl, r_err = get_mag_radius(familyname, objectname)
     
     print "-- Preforming photometry on image {} ".format(expnum_p)  
     stamp_found = False      
@@ -344,9 +344,170 @@ def query_jpl(familyname, objectname, step=1, su='d', params=[9, 36]):
     
     return mag_list, r_err
         
+
+def query_jpl_new(objectname, time_start, time_end, params, step=1, su='d'):
+    
+    # Construct the query url
+    s = "'"
+    for p in params:
+        s += "{},".format(p)
+
+    # form URL pieces that Horizon needs for its processing instructions
+    urlArr = ["http://ssd.jpl.nasa.gov/horizons_batch.cgi?batch=1&COMMAND=",
+                  '',
+                  "&MAKE_EPHEM='YES'&TABLE_TYPE='OBSERVER'&START_TIME=",
+                  '',
+                  "&STOP_TIME=",
+                  '',
+                  "&STEP_SIZE=",
+                  '',
+                  "&QUANTITIES=" + s,
+                  "&CSV_FORMAT='YES'"]
+          
+    # change the object name, start and end times, and time step into proper url-formatting
+    url_style_output = []
+    for obj in [objectname, time_start, time_end]:
+        os = obj.split()
+        if len(os) > 1:
+            ob = "'" + os[0] + '%20' + os[1] + "'"
+        else:
+            ob =  "'" + objectname + "'"
+        url_style_output.append(ob)
+    step = "'" + str(step) + "%20" + su + "'"
+ 
+    # URL components
+    urlArr[1] = url_style_output[0]  # formatted object name
+    urlArr[3] = url_style_output[1]  # start time
+    urlArr[5] = url_style_output[2]  # end time
+    urlArr[7] = step  # timestep   
+    urlStr = "".join(urlArr)  # create the url to pass to Horizons
+   
+    # Query Horizons; if it's busy, wait and try again in a minute
+    done = 0
+    while not done:
+        urlHan = url.urlopen(urlStr)
+        urlData = urlHan.readlines()
+        urlHan.close()
+        if len(urlData[0].split()) > 1:
+            if "BUSY:" <> urlData[0].split()[1]:
+                done = 1
+            else:
+                print urlData[0],
+                print "Sleeping 60 s and trying again"
+                time.sleep(60)
+        else:
+            done = 1
+    
+    EPHEM_CSV_START_MARKER = '$$SOE'
+    EPHEM_CSV_END_MARKER = '$$EOE'
+    ephemCSV_start = None
+    ephemCSV_end = None
+    for i, dataLine in enumerate(urlData):
+        if dataLine.strip() == EPHEM_CSV_START_MARKER:
+            ephemCSV_start = i
+        elif dataLine.strip() == EPHEM_CSV_END_MARKER:
+            ephemCSV_end = i
+    assert ephemCSV_start is not None, 'No ephem start'
+    assert ephemCSV_end is not None, 'No ephem end'
+    assert ephemCSV_start < ephemCSV_end, 'Ephem are a bit odd'
+    # The header, the lines *after* the start marker, up to (but not including, because it is a slice) the end marker
+    csv_lines = [urlData[ephemCSV_start - 2]] + urlData[ephemCSV_start + 1: ephemCSV_end]
+    ephemCSV = ''.join(csv_lines)
+    ephemCSVfile = io.BytesIO(ephemCSV)
+    ephemerides = pd.DataFrame.from_csv(ephemCSVfile)
+    
+    return ephemerides
+    
+def get_mag_radius(familyname, objectname):
+    
+    if type(objectname) is not str:
+        objectname = str(objectname)
+    
+    # from familyname_images.txt get date range of images for objectname
+    date_range = []
+    with open('asteroid_families/{}/{}_images.txt'.format(familyname, familyname)) as infile:
+        for line in infile.readlines()[1:]:
+            if len(line.split()) > 0:
+                if objectname == line.split()[0]:
+                    date_range.append(float(line.split()[5]))   
+                    
+    date_range_t = Time(date_range, format='mjd', scale='utc')
+    assert  len(date_range_t.iso) > 0
+    time_start = ((date_range_t.iso[0]).split())[0] + ' 00:00:00.0'
+    time_end = ((date_range_t.iso[-1]).split())[0] + ' 00:00:00.0'
+
+    if time_start == time_end:
+        time_end = add_day(time_end, date_range_t)
+
+    print " Date range in query: {} -- {}".format(time_start, time_end)
+
+    # change date format from 01-01-2001 00:00 to 01-Jan-2001 00:00
+    date_start = change_date(time_start)
+    date_end = change_date(time_end)
+    
+    ephemerides = query_jpl_new(objectname, date_start, date_end, params=[9, 36])
+    
+    mag_list =  np.array(ephemerides.icol(2))
+    ra_avg = np.mean(np.mean(ephemerides.icol(3)))
+    dec_avg = np.mean(np.mean(ephemerides.icol(4)))
+    
+    if ra_avg > dec_avg:
+        r_err = ra_avg
+    else:
+        r_err = dec_avg
+
+    if r_err < 30: # 0.003 deg * 3600 "/deg / 0.187 "/pix
+        r_err = 30
+    
+    return mag_list, r_err
+
+def get_ecc(familyname, objectname, expnum):
+    '''
+    Queries the JPL Horizon's ephemeris for rate of change of RA and DEC for a specific day
+    '''
+    
+    if type(objectname) is not str:
+        objectname = str(objectname)
+    
+    # from familyname_images.txt get date range of images for objectname
+    image_list_path = 'asteroid_families/{}/{}_images_test.txt'.format(familyname, familyname)
+    image_table = pd.read_table(image_list_path, usecols=[0, 1, 5], header=0, names=['Object', 'Image', 'time'], sep=' ', dtype={'Object':object})
+    index = image_table.query(('Image == "{}"'.format(expnum)) and ('Object == "{}"'.format(objectname)))
+
+    date = index['time']          
+    date_t = Time(date, format='mjd', scale='utc')
+    assert  len(date_t.iso) > 0
+
+    time_start = (date_t.iso)[0].split()[0]+' 00:00:00.0'
+    
+    time_end_date = (((date_t.iso[0]).split())[0]).split('-')
+    day_add_one = int(time_end_date[2])+1
+    if day_add_one < 10:
+        day = '0{}'.format(day_add_one)
+    else:
+        day = day_add_one
+    if day > 27:
+        day = 1
+        month = int(time_end_date[1]) + 1
+    else:
+        month = time_end_date[1]
+    time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], month, day)
+    
+    # change date format from 01-01-2001 00:00 to 01-Jan-2001 00:00
+    date_start = change_date(time_start)
+    date_end = change_date(time_end)
+    
+    ephemerides = query_jpl_new(objectname, date_start, date_end, params=[3])
+    
+    a = ephemerides['dRA*cosD'][0]
+    b = ephemerides['d(DEC)/dt'][0]
+    e = (1-(b/a)**2)**0.5
+                    
+    return e
+
 def query_jpl_ecc(familyname, objectname, expnum, step=1, su='d', params=[3]):
     '''
-    Constructs a URL to query JPL Horizon's for rate of chang eof RA and DEC for a specific day
+    Constructs a URL to query JPL Horizon's for rate of change of RA and DEC for a specific day
     '''
         
     if type(objectname) is not str:
@@ -436,7 +597,6 @@ def query_jpl_ecc(familyname, objectname, expnum, step=1, su='d', params=[3]):
     ephemCSV_start = None
     ephemCSV_end = None
     for i, dataLine in enumerate(urlData):
-        print dataLine
         if dataLine.strip() == EPHEM_CSV_START_MARKER:
             ephemCSV_start = i
         elif dataLine.strip() == EPHEM_CSV_END_MARKER:
@@ -713,6 +873,15 @@ def add_day(time_end, date_range_t):
             day = '0{}'.format(day_add_one)
         else:
             day = day_add_one
+        month = int(time_end_date[1])
+        if day > 27:
+            day = 1
+            if month == 12:
+                month = 1
+            else:
+                month = month + 1
+        else:
+            month = time_end_date[1]
         time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], time_end_date[1], day)
         
         return time_end
