@@ -310,7 +310,7 @@ def query_jpl(familyname, objectname, step=1, su='d', params=[9, 36]):
                 time.sleep(60)
         else:
             done = 1   
-            
+                
     EPHEM_CSV_START_MARKER = '$$SOE'
     EPHEM_CSV_END_MARKER = '$$EOE'
     ephemCSV_start = None
@@ -369,7 +369,12 @@ def query_jpl_ecc(familyname, objectname, expnum, step=1, su='d', params=[3]):
         day = '0{}'.format(day_add_one)
     else:
         day = day_add_one
-    time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], time_end_date[1], day)
+    if day > 27:
+        day = 1
+        month = int(time_end_date[1]) + 1
+    else:
+        month = time_end_date[1]
+    time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], month, day)
     
     # change date format from 01-01-2001 00:00 to 01-Jan-2001 00:00
     date_start = change_date(time_start)
@@ -431,6 +436,7 @@ def query_jpl_ecc(familyname, objectname, expnum, step=1, su='d', params=[3]):
     ephemCSV_start = None
     ephemCSV_end = None
     for i, dataLine in enumerate(urlData):
+        print dataLine
         if dataLine.strip() == EPHEM_CSV_START_MARKER:
             ephemCSV_start = i
         elif dataLine.strip() == EPHEM_CSV_END_MARKER:
