@@ -1,6 +1,7 @@
 import argparse
 import os
 import getpass
+import pandas as pd
 
 from find_family import find_family_members
 from find_family import get_all_families_list
@@ -56,25 +57,12 @@ def main():
     args = parser.parse_args()
 
     do_all_things(args.family, args.object, args.filter, args.type, args.radius, args.aperture, args.thresh)
-    
-    '''
-    family_file = 'asteroid_families/{}/{}_family.txt'.format(args.family, args.family)
-    if os.path.exists(family_file):
-        with open(family_file) as infile:
-            for line in infile:
-                do_all_things
 
-    
-        for familyname in families_list[32:]:
-            do_all_things(username, password, familyname, args.object, args.filter, args.type, args.radius, args.aperture, args.thresh)
-    
-    else:
-        family_list = find_family_members(args.family)
-        do_all_things(username, password, args.family, args.object, args.filter, args.type, args.radius, args.aperture, args.thresh)
-    '''
-    
 def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', radius=0.01, aperture=10.0, thresh=3.5):
    
+    username = raw_input("CADC username: ")
+    password = getpass.getpass("CADC password: ")
+    
     family_list_path = 'asteroid_families/{}/{}_family.txt'.format(familyname, familyname)
     
     if  os.path.exists(family_list_path):
@@ -85,32 +73,32 @@ def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', ra
     else:    
         all_object_list = find_family_members(familyname)
     
-    image_list_path = 'asteroid_families/{}/{}_images_test.txt'.format(familyname, familyname) # USING TEST FILE
-    print "WARNING: USING A TEST FILE ***************************************************************" 
-    if  os.path.exists(image_list_path):
-        expnum_list = []
-        image_list = []
-        ra_list = []
-        dec_list = []
-        print "----- List of images in family {} exists already -----".format(familyname)
-        with open(image_list_path) as infile:
-            filestr = infile.read()
-            fileline = filestr.split('\n')
-            for item in fileline[1:]:
-                if len(item.split()) > 0:
-                    image_list.append(item.split()[0])
-                    expnum_list.append(item.split()[1])
-                    ra_list.append(float(item.split()[3]))
-                    dec_list.append(float(item.split()[4]))
-    else:  
-        image_list, expnum_list, ra_list, dec_list = get_image_info(familyname, filtertype, imagetype) 
-
-    username = raw_input("CADC username: ")
-    password = getpass.getpass("CADC password: ")
     
     out_filename = '{}_r{}_t{}_output.txt'.format(familyname, aperture, thresh)
     with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'w') as outfile:
         outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('Object', "Image", 'flux', 'mag', 'RA', 'DEC', 'ecc', 'index'))
+    
+
+    image_list_path = 'asteroid_families/{}/{}_images_test.txt'.format(familyname, familyname) # USING TEST FILE
+    print "WARNING: USING A TEST FILE ***************************************************************" 
+    if  os.path.exists(image_list_path):
+        table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['Object', 'Image', 'RA', 'DEC'], sep=' ')
+        for row in range(len(table)):
+            print '\n----- Searching for {} {} -----'.format(table['Object'][row], table['Image'][row])
+            vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
+            postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(table['Object'][row], table['Image'][row], table['RA'][row], table['DEC'][row])
+            if storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)) == True:
+                print "-- Stamp already exists"
+            else:
+                cutout(table['Object'][row], table['Image'][row], table['RA'][row], table['DEC'][row], radius, username, password, familyname)
+                
+            object_data = iterate_thru_images(familyname, str(table['Object'][row]), table['Image'][row], username, password, aperture, thresh, filtertype, imagetype)
+    else:  
+        go_the_long_way(familyname, filtertype, imagetype)
+
+def fo_the_long_way(familyname, filtertype, imagetype):
+        
+    image_list, expnum_list, ra_list, dec_list = get_image_info(familyname, filtertype, imagetype) 
     
     for index, objectname in enumerate(image_list):
         
