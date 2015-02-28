@@ -1,4 +1,5 @@
 import os
+import io
 import sep
 import re
 import vos
@@ -125,14 +126,19 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
             
     # initiate directories
     init_dirs(familyname, objectname) 
-            
-    try:        
-        # get range of magnitudes of object over time span that the images were taken
-        urlData, date_start, date_end = query_jpl(familyname, objectname, step=1)
-        mag_list_jpl, r_err, e_jpl = parse_mag_jpl(urlData, date_start, date_end)
+    
+    '''
+    try:
+        print "-- Querying JPL Horizon's ephemeris"
+        e_jpl = parse_mag_jpl_ecc(familyname, objectname, expnum_p)
+        mag_list_jpl, r_err = parse_mag_jpl(familyname, objectname)
     except:
-        print "  No images of this object exist"
+        print 'WARNING: No images exist'
         return
+    '''
+    print "-- Querying JPL Horizon's ephemeris"
+    e_jpl = query_jpl_ecc(familyname, objectname, expnum_p)
+    mag_list_jpl, r_err = query_jpl(familyname, objectname)
     
     print "-- Preforming photometry on image {} ".format(expnum_p)  
     stamp_found = False      
@@ -147,7 +153,7 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
                     with fits.open('{}/{}'.format(stamps_dir, file)) as hdulist: 
                         pvwcs = wcs.WCS(hdulist[0].header)
                         try:
-                            if hdulist[0].data is None:
+                            try:
                                 zeropt = fits.getval('{}/{}'.format(stamps_dir, file), 'PHOTZP', 1)
                                 exptime = fits.getval('{}/{}'.format(stamps_dir, file), 'EXPTIME', 1)
                                 size = (hdulist[1].header)['NAXIS1'] + (hdulist[2].header)['NAXIS1']
@@ -156,7 +162,7 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
                                 table = vstack([table1, table2])
                                 #ascii.write(table, os.path.join(stamps_dir, '{}_phot.txt'.format(expnum_p))) 
                              
-                            else:
+                            except:
                                 zeropt = fits.getval('{}/{}'.format(stamps_dir, file), 'PHOTZP', 0)
                                 size = (hdulist[0].header)['NAXIS1']
                                 exptime = fits.getval('{}/{}'.format(stamps_dir, file), 'EXPTIME', 0)
@@ -168,17 +174,17 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
                             return
                         except ValueError, e:
                             print 'ERROR: {} **********'.format(e)
-                            get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
+                            #get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
                             return
                 
                     os.unlink('{}/{}'.format(stamps_dir, file))    
-                
+                    
                 except IOError, e:
                     print 'ERROR: {} **********'.format(e)
                     get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
                     return
                     
-                enough = check_num_stars(table, size)
+                r_new, r_old, enough = check_num_stars(table, size, objectname, expnum_p, username, password, familyname)
                 if enough == False:
                     return
                                 
@@ -195,7 +201,10 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
                     print good_neighbours
         
                     print_output(familyname, objectname, expnum_p, good_neighbours, ap, th)
-                    return good_neighbours
+                    
+                    if len(good_neighbours) == 1:
+                        print '-- Cutting out recentered postage stamp'
+                        recut_stamp(familyname, objectname, expnum_p, good_neighbours, r_old, username, password)
         
                 except TypeError, e:
                     return
@@ -208,14 +217,18 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
         print "WARNING: no stamps exist"
         get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
         
-
+def recut_stamp(familyname, objectname, expnum_p, object_data, r_old, username, password):
+        
+    if object_data is not None:
+        #for i in range(0, len(object_data)):
+            # objectname, expnum_p, r_new, RA, DEC, username, password, familyname
+        print '-- Cutting recentered stamp'
+        get_stamps.centered_stamp(objectname, expnum_p, r_old, object_data[0][5], object_data[0][6], username, password, familyname)
                             
-def query_jpl(familyname, objectname, step=1, su='d', params=[3, 9, 36]):
+def query_jpl(familyname, objectname, step=1, su='d', params=[9, 36]):
     '''
     Constructs a URL to query JPL Horizon's for apparent magnitude in a date range
     '''
-    
-    print "-- Querying JPL Horizon's ephemeris for apparent magnitudes"
     
     if type(objectname) is not str:
         objectname = str(objectname)
@@ -297,72 +310,145 @@ def query_jpl(familyname, objectname, step=1, su='d', params=[3, 9, 36]):
                 time.sleep(60)
         else:
             done = 1   
-        
-    return urlData, date_start, date_end    
-        
-
-def parse_mag_jpl(urlData, date_start, date_end):
+            
+    EPHEM_CSV_START_MARKER = '$$SOE'
+    EPHEM_CSV_END_MARKER = '$$EOE'
+    ephemCSV_start = None
+    ephemCSV_end = None
+    for i, dataLine in enumerate(urlData):
+        if dataLine.strip() == EPHEM_CSV_START_MARKER:
+            ephemCSV_start = i
+        elif dataLine.strip() == EPHEM_CSV_END_MARKER:
+            ephemCSV_end = i
+    assert ephemCSV_start is not None, 'No ephem start'
+    assert ephemCSV_end is not None, 'No ephem end'
+    assert ephemCSV_start < ephemCSV_end, 'Ephem are a bit odd'
+    # The header, the lines *after* the start marker, up to (but not including, because it is a slice) the end marker
+    csv_lines = [urlData[ephemCSV_start - 2]] + urlData[ephemCSV_start + 1: ephemCSV_end]
+    ephemCSV = ''.join(csv_lines)
+    ephemCSVfile = io.BytesIO(ephemCSV)
+    ephemerides = pd.DataFrame.from_csv(ephemCSVfile)
     
-    # parse through urlData for indexes of start and end dates    
-    index_end = None
-    index_start = None
-    for idx, line in enumerate(urlData):  #testing
-        assert line.split() > 0
-        try:
-            date_jpl = line.split()[0]+' '+(line.split()[1]).strip(',')
-            if date_start == date_jpl:
-                index_start = idx
-        except:
-            None
-    if index_start is None:
-        print "WARNING: index start could not be obtained, set to index 69"
-        index_start = 69
-    for idx, line in enumerate(urlData):  #testing
-        try:
-            date_jpl = line.split()[0]+' '+(line.split()[1]).strip(',')
-            if date_end == date_jpl:
-                index_end = idx
-        except:
-            None
-    if index_end is None:
-        print "WARNING: index end could not be obtained, set to index 70"
-        index_end = 70
-        
-    # for indexes from start to end dates, get apparent magnitude values
-    a_list = []
-    b_list = []
-    mag_list = []
-    RA_3sigma = []
-    DEC_3sigma = []
-    for line in urlData[index_start:index_end+1]:
-        assert len(line.split()) > 0 
-        try:
-            a_list.append(float((line.split()[3]).strip(',')))
-            b_list.append(float((line.split()[4]).strip(',')))
-            mag_list.append(float((line.split()[5]).strip(',')))
-            RA_3sigma.append(float((line.split()[6]).strip(',')))
-            DEC_3sigma.append(float((line.split()[7]).strip(',')))
-        except:
-            print "WARNING: could not get magnitude from JPL line"
     
-    assert len(mag_list) > 0
+    mag_list =  np.array(ephemerides.icol(2))
+    ra_avg = np.mean(np.mean(ephemerides.icol(3)))
+    dec_avg = np.mean(np.mean(ephemerides.icol(4)))
     
-    RA_3sigma_avg = np.mean(RA_3sigma) / 0.184 # convert from arcseconds to pixels
-    DEC_3sigma_avg = np.mean(DEC_3sigma) / 0.184 
-    if RA_3sigma_avg > DEC_3sigma_avg:
-        r_err = RA_3sigma_avg
+    if ra_avg > dec_avg:
+        r_err = ra_avg
     else:
-        r_err = DEC_3sigma_avg
+        r_err = dec_avg
 
     if r_err < 30: # 0.003 deg * 3600 "/deg / 0.187 "/pix
         r_err = 30
     
-    a_avg = np.mean(a_list)
-    b_avg = np.mean(b_list)
+    return mag_list, r_err
+        
+def query_jpl_ecc(familyname, objectname, expnum, step=1, su='d', params=[3]):
+    '''
+    Constructs a URL to query JPL Horizon's for rate of chang eof RA and DEC for a specific day
+    '''
+        
+    if type(objectname) is not str:
+        objectname = str(objectname)
     
-    e = (1-(b_avg/a_avg)**2)**0.5
+    # from familyname_images.txt get date range of images for objectname
+    image_list_path = 'asteroid_families/{}/{}_images_test.txt'.format(familyname, familyname)
+    image_table = pd.read_table(image_list_path, usecols=[0, 1, 5], header=0, names=['Object', 'Image', 'time'], sep=' ', dtype={'Object':object})
+    index = image_table.query(('Image == "{}"'.format(expnum)) and ('Object == "{}"'.format(objectname)))
+
+    date = index['time']          
+    date_t = Time(date, format='mjd', scale='utc')
+    assert  len(date_t.iso) > 0
+
+    time_start = (date_t.iso)[0].split()[0]+' 00:00:00.0'
     
-    return mag_list, r_err, e
+    time_end_date = (((date_t.iso[0]).split())[0]).split('-')
+    day_add_one = int(time_end_date[2])+1
+    if day_add_one < 10:
+        day = '0{}'.format(day_add_one)
+    else:
+        day = day_add_one
+    time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], time_end_date[1], day)
+    
+    # change date format from 01-01-2001 00:00 to 01-Jan-2001 00:00
+    date_start = change_date(time_start)
+    date_end = change_date(time_end)
+
+    # Construct the query url
+    s = "'"
+    for p in params:
+        s += "{},".format(p)
+
+    # form URL pieces that Horizon needs for its processing instructions
+    urlArr = ["http://ssd.jpl.nasa.gov/horizons_batch.cgi?batch=1&COMMAND=",
+                  '',
+                  "&MAKE_EPHEM='YES'&TABLE_TYPE='OBSERVER'&START_TIME=",
+                  '',
+                  "&STOP_TIME=",
+                  '',
+                  "&STEP_SIZE=",
+                  '',
+                  "&QUANTITIES=" + s,
+                  "&CSV_FORMAT='YES'"]
+          
+    # change the object name, start and end times, and time step into proper url-formatting
+    url_style_output = []
+    for obj in [objectname, time_start, time_end]:
+        os = obj.split()
+        if len(os) > 1:
+            ob = "'" + os[0] + '%20' + os[1] + "'"
+        else:
+            ob =  "'" + objectname + "'"
+        url_style_output.append(ob)
+    step = "'" + str(step) + "%20" + su + "'"
+ 
+    # URL components
+    urlArr[1] = url_style_output[0]  # formatted object name
+    urlArr[3] = url_style_output[1]  # start time
+    urlArr[5] = url_style_output[2]  # end time
+    urlArr[7] = step  # timestep   
+    urlStr = "".join(urlArr)  # create the url to pass to Horizons
+   
+    # Query Horizons; if it's busy, wait and try again in a minute
+    done = 0
+    while not done:
+        urlHan = url.urlopen(urlStr)
+        urlData = urlHan.readlines()
+        urlHan.close()
+        if len(urlData[0].split()) > 1:
+            if "BUSY:" <> urlData[0].split()[1]:
+                done = 1
+            else:
+                print urlData[0],
+                print "Sleeping 60 s and trying again"
+                time.sleep(60)
+        else:
+            done = 1
+    
+    EPHEM_CSV_START_MARKER = '$$SOE'
+    EPHEM_CSV_END_MARKER = '$$EOE'
+    ephemCSV_start = None
+    ephemCSV_end = None
+    for i, dataLine in enumerate(urlData):
+        if dataLine.strip() == EPHEM_CSV_START_MARKER:
+            ephemCSV_start = i
+        elif dataLine.strip() == EPHEM_CSV_END_MARKER:
+            ephemCSV_end = i
+    assert ephemCSV_start is not None, 'No ephem start'
+    assert ephemCSV_end is not None, 'No ephem end'
+    assert ephemCSV_start < ephemCSV_end, 'Ephem are a bit odd'
+    # The header, the lines *after* the start marker, up to (but not including, because it is a slice) the end marker
+    csv_lines = [urlData[ephemCSV_start - 2]] + urlData[ephemCSV_start + 1: ephemCSV_end]
+    ephemCSV = ''.join(csv_lines)
+    ephemCSVfile = io.BytesIO(ephemCSV)
+    ephemerides = pd.DataFrame.from_csv(ephemCSVfile)
+        
+    a = ephemerides['dRA*cosD'][0]
+    b = ephemerides['d(DEC)/dt'][0]
+    e = (1-(b/a)**2)**0.5
+                    
+    return e
        
 def change_date(date):
     '''
@@ -484,7 +570,7 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, e_jpl, 
         
             # apply both eccentricity and magnitude conditions
             try:
-                if (abs(mag_sep - mean) < magrange) & (float(elim) - 1 < ecc < float(elim) + 0.1):
+                if (abs(mag_sep - mean) < magrange) & (float(elim) - 0.1 < ecc < float(elim) + 0.1):
                     mRA_pix = septable[i][0]
                     mDEC_pix = septable[i][1]
                     
@@ -539,7 +625,7 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, e_jpl, 
         
         return good_neighbours, mean 
         
-def check_num_stars(table, size):
+def check_num_stars(table, size, objectname, expnum_p, username, password, familyname):
         
     # r_old = size * 0.184 / 3600
     # r_new = r_old + 0.05
@@ -548,10 +634,13 @@ def check_num_stars(table, size):
     
     if size < 200:
         r_new = 0.02
+        r_old = 0.02
     if 200 < size < 500:
         r_new = 0.03
+        r_old = 0.02
     if size > 500:
         r_new = 0.04
+        r_old = 0.02
     
     print '  Number of objects in image: {}'.format(len(table))
     if 0 < len(table) < 30:
@@ -562,26 +651,26 @@ def check_num_stars(table, size):
         if size > 500:
             print 'SIZE IS AT MAX ({}) and not enough stars <<<<<<<<<<<<<<<<<<<'.format(size)
     
-    return enough 
+    return r_new, r_old, enough 
     
 def print_output(familyname, objectname, expnum_p, object_data, ap, th):
 
-                if object_data is None:
-                    print "WARNING: Could not identify object {} in image".format(objectname, expnum_p)
-                    
-                else:
-                    out_filename = '{}_r{}_t{}_output.txt'.format(familyname, ap, th)
-                    with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'a') as outfile:
-                        try:
-                            for i in range(0, len(object_data)):
-                                #'Object', "Image", 'flux', 'mag', 'RA', 'DEC', 'ecc', 'index'
-                                outfile.write('{} {} {} {} {} {} {} {}\n'.format(
-                                      objectname, expnum_p, object_data[i][1], object_data[i][2], object_data[i][5], object_data[i][6], 
-                                      object_data[i][7], object_data[i][0]))
-                        except:
-                            print "ERROR: cannot write to outfile <<<<<<<<<<<<<<<<<<<<<<<<<<"
-                
-                    return object_data
+    if object_data is None:
+        print "WARNING: Could not identify object {} in image".format(objectname, expnum_p)
+        
+    else:
+        out_filename = '{}_r{}_t{}_output.txt'.format(familyname, ap, th)
+        with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'a') as outfile:
+            try:
+                for i in range(0, len(object_data)):
+                    #'Object', "Image", 'flux', 'mag', 'RA', 'DEC', 'ecc', 'index'
+                    outfile.write('{} {} {} {} {} {} {} {}\n'.format(
+                          objectname, expnum_p, object_data[i][1], object_data[i][2], object_data[i][5], object_data[i][6], 
+                          object_data[i][7], object_data[i][0]))
+            except:
+                print "ERROR: cannot write to outfile <<<<<<<<<<<<<<<<<<<<<<<<<<"
+    
+        return object_data
                     
 def init_dirs(familyname, objectname):
     
