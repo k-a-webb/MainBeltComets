@@ -127,26 +127,23 @@ def get_one_stamp(objectname, expnum, radius, username, password, familyname):
             #assert storage.exists(vos_dir, force=True)
             
             if expnum == expnum_file:
-                '''
-                urlData, date_start, date_end = query_jpl(familyname, objectname, step=1)
-                print "----- Querying JPL Horizon's ephemeris for RA and DEC uncertainties -----"
-                RA_3sigma, DEC_3sigma = parse_mag_jpl(urlData, date_start, date_end) # in arcseconds
-        
-                RA_3sigma_avg = np.mean(RA_3sigma) / 3600 # convert to degrees
-                DEC_3sigma_avg = np.mean(DEC_3sigma) / 3600
-        
-                if RA_3sigma_avg > DEC_3sigma_avg:
-                    r_temp = RA_3sigma_avg
-                else:
-                    r_temp = DEC_3sigma_avg
-            
-                if r_temp > radius:
-                    radius = r_temp
-                '''
-            
+                
+                postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, expnum, RA, DEC)
+                storage.remove('vos:kawebb/postage_stamps/{}/{}'.format(familyname, postage_stamp_filename))
+                
                 cutout(objectname, expnum, RA, DEC, radius, username, password, familyname)
                 return                
 	
+def centered_stamp(objectname, expnum,radius, RA, DEC, username, password, familyname):
+    
+    vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
+    postage_stamp_filename = "{}_{}_{:8f}_{:8f}_centered.fits".format(objectname, expnum, RA, DEC)
+    if storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)) == True:
+        print "  Stamp already exists"
+    else:
+        cutout(objectname, expnum, RA, DEC, radius, username, password, familyname)
+    return
+    
 def cutout(objectname, image, RA, DEC, radius, username, password, familyname):
     
     ''' 
@@ -186,7 +183,7 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname):
               assert os.path.exists(object_dir)
               tmp_file.write(r.content)
               storage.copy(object_dir, '{}/{}'.format(vos_dir, postage_stamp_filename))
-          os.unlink(object_dir)  # easier not to have them hanging around    
+          #os.unlink(object_dir)  # easier not to have them hanging around    
     
     except: 
         print 'Connection Failed'
