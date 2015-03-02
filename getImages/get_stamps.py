@@ -130,7 +130,6 @@ def get_one_stamp(objectname, expnum, radius, username, password, familyname):
                 
                 postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, expnum, RA, DEC)
                 storage.remove('vos:kawebb/postage_stamps/{}/{}'.format(familyname, postage_stamp_filename))
-                
                 cutout(objectname, expnum, RA, DEC, radius, username, password, familyname)
                 return                
 	
@@ -141,6 +140,7 @@ def centered_stamp(objectname, expnum,radius, RA, DEC, username, password, famil
     if storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)) == True:
         print "  Stamp already exists"
     else:
+        print type(objectname, expnum, RA, DEC, radius, username, password, familyname)
         cutout(objectname, expnum, RA, DEC, radius, username, password, familyname)
     return
     
@@ -173,6 +173,10 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname):
     
     r = requests.get(BASEURL, params=params, auth=(username, password))
     
+    if type(RA) != float:
+        RA = float(RA)
+        DEC = float(DEC)
+    
     try:
           r.raise_for_status()  # confirm the connection worked as hoped
     
@@ -185,8 +189,8 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname):
               storage.copy(object_dir, '{}/{}'.format(vos_dir, postage_stamp_filename))
           #os.unlink(object_dir)  # easier not to have them hanging around    
     
-    except: 
-        print 'Connection Failed'
+    except requests.HTTPError, e: 
+        print 'Connection Failed, {}'.format(e)
         return
     
 
