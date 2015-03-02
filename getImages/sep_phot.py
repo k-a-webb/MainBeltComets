@@ -185,13 +185,13 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
                     return
                                 
                 try:
-                    i_list = find_neighbours(table, expnum_p, pvwcs, r_err)
-                    if len(i_list) == 0:
-                        i_list = find_neighbours(table, expnum_p, pvwcs, 1.5*r_err)
+                    i_list = find_neighbours(table, objectname, expnum_p, pvwcs, r_err)
+                    '''if len(i_list) == 0:
+                        i_list = find_neighbours(table, objectname, expnum_p, pvwcs, 1.5*r_err)
                         if len(i_list) == 0:
                             print 'WARNING: No nearest neighbours were found within {} ++++++++++++++++++++++'.format(r_err*1.5)
                             ascii.write(table, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum_p))
-                            return
+                            return'''
                             
                     good_neighbours, mean = iden_good_neighbours(expnum_p, i_list, table, zeropt, mag_list_jpl, e_jpl, pvwcs)
                     print good_neighbours
@@ -348,7 +348,6 @@ def get_ell(familyname, objectname, expnum):
         objectname = str(objectname)
     
     # from familyname_images.txt get date range of images for objectname
-    image_list_path = 'asteroid_families/{}/{}_images_test.txt'.format(familyname, familyname)
     image_table = pd.read_table(image_list_path, usecols=[0, 1, 5], header=0, names=['Object', 'Image', 'time'], sep=' ', dtype={'Object':object})
     index = image_table.query(('Image == "{}"'.format(expnum)) and ('Object == "{}"'.format(objectname)))
 
@@ -432,28 +431,27 @@ def sep_phot(data, ap, th):
     table = Table([objs['x'], objs['y'], flux, objs['a'], objs['b']], names=('x', 'y', 'flux', 'a', 'b'))
     return table
 
-def find_neighbours(septable, expnum_p, pvwcs, r_err):
+def find_neighbours(septable, objectname, expnum, pvwcs, r_err):
     '''
     Computes the nearest neighbours to predicted coordinates within an RA/DEC uncertainty circle
     '''
-    print r_err
-    tree = cKDTree(zip((np.array(septable['x'])).ravel(), (np.array(septable['y'])).ravel()))
+    tree = cKDTree(zip((np.array(septable['x'])).ravel(), (np.array(septable['y'])).ravel()))    
     
     with open('{}/{}'.format(family_dir, imageinfo)) as infile:
         for line in infile.readlines()[1:]:
             assert len(line.split()) > 0
-            expnum_p_fromfile = line.split()[1]
+            expnum_fromfile = line.split()[1]
+            object_fromfile = line.split()[0]
             
             # for entries in *_images.txt that correspond to images of the object
-            if expnum_p_fromfile == expnum_p:
-                objectname = line.split()[0]
+            if (expnum_fromfile == expnum) & (object_fromfile == objectname):
+                print line
                 pRA = float(line.split()[3])
                 pDEC = float(line.split()[4])
-                expnum = (line.split()[1]).rstrip('p')
                 
                 pRA_pix, pDEC_pix = pvwcs.sky2xy(pRA, pDEC) # convert from WCS to pixels
-                #print " Predicted RA and DEC: {}  {}".format(pRA, pDEC)
-                #print "  in pixels: {} {}".format(pRA_pix, pDEC_pix)
+                print " Predicted RA and DEC: {}  {}".format(pRA, pDEC)
+                print "  in pixels: {} {}".format(pRA_pix, pDEC_pix)
                 
                 # parse through table and get RA and DEC closest to predicted coordinates (in pixels)
                 coords = np.array([pRA_pix, pDEC_pix])
@@ -461,6 +459,24 @@ def find_neighbours(septable, expnum_p, pvwcs, r_err):
             
                 return i_list
 
+    '''table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['Object', 'Image', 'RA', 'DEC'], sep=' ', dtype={'Object':object})
+    index = table.query(('Object == "{}"'.format(objectname)))
+    index2 = index.query(('Image == "{}"'.format(expnum)))
+    print index2
+    pRA = index2.get_value(0, ['RA'])
+    pDEC = index2.get_value(0, ['DEC'])
+    print pRA, pDEC, type(pRA), type(pDEC)
+    pRA_pix, pDEC_pix = pvwcs.sky2xy(pRA, pDEC) # convert from WCS to pixels
+    #print " Predicted RA and DEC: {}  {}".format(pRA, pDEC)
+    #print "  in pixels: {} {}".format(pRA_pix, pDEC_pix)
+    
+    coords = np.array([pRA_pix, pDEC_pix])
+    i_list = tree.query_ball_point(coords, r_err)
+    print i_list
+
+    return i_list'''
+    
+    
 def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, e_jpl, pvwcs):
     '''
     Selects nearest neighbour object from predicted coordinates as object of interest
@@ -611,9 +627,6 @@ def print_output(familyname, objectname, expnum_p, object_data, ap, th):
                     
 def init_dirs(familyname, objectname):
     
-    global imageinfo
-    imageinfo = '{}_images.txt'.format(familyname)
-    
     # initiate vos directories 
     global vos_dir
     vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
@@ -630,6 +643,11 @@ def init_dirs(familyname, objectname):
     stamps_dir = os.path.join(family_dir, familyname+'_stamps')
     if os.path.isdir(stamps_dir) == False:
         os.makedirs(stamps_dir)
+        
+    global imageinfo
+    imageinfo = '{}_images.txt'.format(familyname)
+    global image_list_path
+    image_list_path = '{}/{}'.format(family_dir, imageinfo)
         
     assert os.path.exists('{}/{}'.format(family_dir, imageinfo))
     
