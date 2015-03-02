@@ -136,6 +136,8 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
         raise
     
     print "-- Preforming photometry on image {} ".format(expnum_p)  
+    #table, exptime, zeropt, size, pvwcs, 
+    
     stamp_found = False      
     for file in client.listdir(vos_dir): # images named with convention: object_expnum_RA_DEC.fits
         if file.endswith('.fits') == True:
@@ -334,8 +336,8 @@ def get_mag_radius(familyname, objectname):
     else:
         r_err = dec_avg / 0.184
 
-    if r_err < 15: # 0.003 deg * 3600 "/deg / 0.187 "/pix
-        r_err = 15
+    if r_err < 25: # 0.003 deg * 3600 "/deg / 0.187 "/pix
+        r_err = 25
     
     return mag_list, r_err
 
@@ -436,7 +438,7 @@ def find_neighbours(septable, objectname, expnum, pvwcs, r_err):
     Computes the nearest neighbours to predicted coordinates within an RA/DEC uncertainty circle
     '''
     tree = cKDTree(zip((np.array(septable['x'])).ravel(), (np.array(septable['y'])).ravel()))    
-    
+    print septable
     with open('{}/{}'.format(family_dir, imageinfo)) as infile:
         for line in infile.readlines()[1:]:
             assert len(line.split()) > 0
