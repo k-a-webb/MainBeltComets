@@ -58,7 +58,7 @@ def main():
 
     do_all_things(args.family, args.object, args.filter, args.type, args.radius, args.aperture, args.thresh)
 
-def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', radius=0.01, aperture=10.0, thresh=3.5):
+def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', radius=0.01, aperture=10.0, thresh=5.0):
    
     username = raw_input("CADC username: ")
     password = getpass.getpass("CADC password: ")
@@ -83,7 +83,7 @@ def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', ra
     print "WARNING: USING A TEST FILE ***************************************************************" 
     if  os.path.exists(image_list_path):
         table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['Object', 'Image', 'RA', 'DEC'], sep=' ')
-        for row in range(len(table)):
+        for row in range(5, 6):#len(table)):
             print '\n----- Searching for {} {} -----'.format(table['Object'][row], table['Image'][row])
             vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
             postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(table['Object'][row], table['Image'][row], table['RA'][row], table['DEC'][row])
