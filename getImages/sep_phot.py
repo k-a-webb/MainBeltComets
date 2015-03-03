@@ -81,9 +81,9 @@ def main():
                             
     args = parser.parse_args()
     
-    select_object(args.family, args.object, float(args.aperture), float(args.thresh), args.filter, args.type, args.elim)
+    find_(args.family, args.object, float(args.aperture), float(args.thresh), args.filter, args.type)
     
-def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=3.5, filtertype='r', imagetype='p', elim=0.3):
+def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=3.5, filtertype='r', imagetype='p'):
 
     out_filename = '{}_r{}_t{}_output.txt'.format(familyname, ap, th)
     with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'w') as outfile:
@@ -131,13 +131,54 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
         print "-- Querying JPL Horizon's ephemeris"
         e_jpl = get_ell(familyname, objectname, expnum_p)
         mag_list_jpl, r_err = get_mag_radius(familyname, objectname)
-    except:
-        print 'WARNING: No images exist'
+    except Exception, e:
+        print 'WARNING: No images exist, {}'.format(e)
         raise
+      
+    try:
+        print "-- Preforming photometry on image {} ".format(expnum_p)
+        table, exptime, zeropt, size, pvwcs, stamp_found = find_all_objects(familyname, objectname, expnum_p, username, password, ap, th, filtertype, imagetype)
+    except Exception, e:
+        print "ERROR: Error while doing photometry, {}".format(e)
+        return
+        
+    if stamp_found == False:
+        print "WARNING: no stamps exist"
+        get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
+        return
     
-    print "-- Preforming photometry on image {} ".format(expnum_p)  
-    #table, exptime, zeropt, size, pvwcs, 
-    
+    r_new, r_old, enough = check_num_stars(table, size, objectname, expnum_p, username, password, familyname)
+    if enough == False:
+        return
+                    
+    try:
+        i_list = find_neighbours(table, objectname, expnum_p, pvwcs, r_err)
+        if len(i_list) == 0:
+            print '-- Expanding radius of nearest neighbour search by 1.5x'
+            i_list = find_neighbours(table, objectname, expnum_p, pvwcs, 1.5*r_err)
+            if len(i_list) == 0:
+                print 'WARNING: No nearest neighbours were found within {} ++++++++++++++++++++++'.format(r_err*1.5)
+                ascii.write(table, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum_p))
+                return
+                
+        good_neighbours, mean = iden_good_neighbours(expnum_p, i_list, table, zeropt, mag_list_jpl, e_jpl, pvwcs)
+        print good_neighbours
+
+        print_output(familyname, objectname, expnum_p, good_neighbours, ap, th)
+        
+        '''if len(good_neighbours) == 1:
+            print '-- Cutting out recentered postage stamp'
+            recut_stamp(familyname, objectname, expnum_p, good_neighbours, r_old, username, password)
+        '''
+        
+    except TypeError, e:
+        return
+    except ValueError:
+        print 'WARNING: Only one object in image'
+        get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
+        return            
+                                    
+def find_all_objects(familyname, objectname, expnum_p, username, password, ap, th, filtertype, imagetype):    
     stamp_found = False      
     for file in client.listdir(vos_dir): # images named with convention: object_expnum_RA_DEC.fits
         if file.endswith('.fits') == True:
@@ -145,75 +186,53 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
             expnum_file = file.split('_')[1]
             if (expnum_file == expnum_p) and (objectname_file == objectname):
                 stamp_found = True
-                storage.copy('{}/{}'.format(vos_dir, file), '{}/{}'.format(stamps_dir, file))
+                file_path = '{}/{}'.format(stamps_dir, file)
+                storage.copy('{}/{}'.format(vos_dir, file), file_path)
                 try:
                     with fits.open('{}/{}'.format(stamps_dir, file)) as hdulist: 
-                        pvwcs = wcs.WCS(hdulist[0].header)
+                        print hdulist.info()
+                        
                         try:
-                            try:
-                                zeropt = fits.getval('{}/{}'.format(stamps_dir, file), 'PHOTZP', 1)
-                                exptime = fits.getval('{}/{}'.format(stamps_dir, file), 'EXPTIME', 1)
-                                size = (hdulist[1].header)['NAXIS1'] + (hdulist[2].header)['NAXIS1']
-                                table1 = sep_phot(hdulist[1].data, ap, th)
-                                table2 = sep_phot(hdulist[2].data, ap, th)
+                            if hdulist[0].data is None:
+                                data1 = fits.getdata(file_path, 1)
+                                data2 = fits.getdata(file_path, 2)
+                                header = fits.getheader(file_path, 1)
+                                header2 = fits.getheader(file_path, 2)
+                                size = header['NAXIS1']+header2['NAXIS1']
+                            
+                                table1 = sep_phot(data1, ap, th)
+                                table2 = sep_phot(data2, ap, th)
                                 table = vstack([table1, table2])
                                 #ascii.write(table, os.path.join(stamps_dir, '{}_phot.txt'.format(expnum_p))) 
-                             
-                            except:
-                                zeropt = fits.getval('{}/{}'.format(stamps_dir, file), 'PHOTZP', 0)
-                                size = (hdulist[0].header)['NAXIS1']
-                                exptime = fits.getval('{}/{}'.format(stamps_dir, file), 'EXPTIME', 0)
-                                table = sep_phot(hdulist[0].data, ap, th)
-                                #ascii.write(table, os.path.join(stamps_dir, '{}_phot.txt'.format(expnum_p))) 
-                                                        
-                        except LookupError: # maybe not correct error type?
-                            print "ERROR: no PHOTZP in header, skipping image **********"
-                            get_stamps.get_one_stamp(objectname, expnum_p, 0.025, username, password, familyname)
-                            return
+                            
+                            else:
+                                data = fits.getdata(file_path)
+                                header = fits.getheader(file_path)
+                                size = header['NAXIS1']
+                                table = sep_phot(data, ap, th)
+                                #ascii.write(table, os.path.join(stamps_dir, '{}_phot.txt'.format(expnum_p)))
+                                
+                        except LookupError, e: # maybe not correct error type?
+                            print "ERROR: {} xxxxxxxxxx".format(e)
+                            #get_stamps.get_one_stamp(objectname, expnum_p, 0.025, username, password, familyname)
+                            raise     
                         except ValueError, e:
                             print 'ERROR: {} **********'.format(e)
-                            get_stamps.get_one_stamp(objectname, expnum_p, 0.025, username, password, familyname)
-                            return
+                            #get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
+                            raise
                 
                     os.unlink('{}/{}'.format(stamps_dir, file))    
                     
+                    pvwcs = wcs.WCS(header)
+                    zeropt = header['PHOTZP']
+                    exptime = header['EXPTIME']
+                    
+                    return table, exptime, zeropt, size, pvwcs, stamp_found
+                    
                 except IOError, e:
                     print 'ERROR: {} **********'.format(e)
-                    get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
-                    return
-                    
-                r_new, r_old, enough = check_num_stars(table, size, objectname, expnum_p, username, password, familyname)
-                if enough == False:
-                    return
-                                
-                try:
-                    i_list = find_neighbours(table, objectname, expnum_p, pvwcs, r_err)
-                    '''if len(i_list) == 0:
-                        i_list = find_neighbours(table, objectname, expnum_p, pvwcs, 1.5*r_err)
-                        if len(i_list) == 0:
-                            print 'WARNING: No nearest neighbours were found within {} ++++++++++++++++++++++'.format(r_err*1.5)
-                            ascii.write(table, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum_p))
-                            return'''
-                            
-                    good_neighbours, mean = iden_good_neighbours(expnum_p, i_list, table, zeropt, mag_list_jpl, e_jpl, pvwcs)
-                    print good_neighbours
-        
-                    print_output(familyname, objectname, expnum_p, good_neighbours, ap, th)
-                    
-                    if len(good_neighbours) == 1:
-                        print '-- Cutting out recentered postage stamp'
-                        recut_stamp(familyname, objectname, expnum_p, good_neighbours, r_old, username, password)
-        
-                except TypeError, e:
-                    return
-                except ValueError:
-                    print 'WARNING: Only one object in image'
-                    get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
-                    return
-                                    
-    if stamp_found == False:
-        print "WARNING: no stamps exist"
-        get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
+                    #get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
+                    raise
         
 def recut_stamp(familyname, objectname, expnum_p, object_data, r_old, username, password):
         
@@ -316,7 +335,7 @@ def get_mag_radius(familyname, objectname):
 
     if time_start == time_end:
         time_end = add_day(time_end, date_range_t)
-
+        
     print " Date range in query: {} -- {}".format(time_start, time_end)
 
     # change date format from 01-01-2001 00:00 to 01-Jan-2001 00:00
@@ -328,9 +347,7 @@ def get_mag_radius(familyname, objectname):
     mag_list =  np.array(ephemerides.icol(2))
     ra_avg = np.mean(np.mean(ephemerides.icol(3)))
     dec_avg = np.mean(np.mean(ephemerides.icol(4)))
-    
-    print ra_avg, dec_avg
-    
+        
     if ra_avg > dec_avg:
         r_err = ra_avg / 0.184
     else:
@@ -371,7 +388,7 @@ def get_ell(familyname, objectname, expnum):
     else:
         month = time_end_date[1]
     time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], month, day)
-    
+        
     # change date format from 01-01-2001 00:00 to 01-Jan-2001 00:00
     date_start = change_date(time_start)
     date_end = change_date(time_end)
@@ -438,7 +455,7 @@ def find_neighbours(septable, objectname, expnum, pvwcs, r_err):
     Computes the nearest neighbours to predicted coordinates within an RA/DEC uncertainty circle
     '''
     tree = cKDTree(zip((np.array(septable['x'])).ravel(), (np.array(septable['y'])).ravel()))    
-    print septable
+    
     with open('{}/{}'.format(family_dir, imageinfo)) as infile:
         for line in infile.readlines()[1:]:
             assert len(line.split()) > 0
@@ -447,7 +464,6 @@ def find_neighbours(septable, objectname, expnum, pvwcs, r_err):
             
             # for entries in *_images.txt that correspond to images of the object
             if (expnum_fromfile == expnum) & (object_fromfile == objectname):
-                print line
                 pRA = float(line.split()[3])
                 pDEC = float(line.split()[4])
                 
@@ -508,7 +524,6 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, e_jpl, 
     else:
         magrange = maxmag - minmag
     
-    print i_list
     for i in i_list:
         flux = septable[i][2]
         x = septable[i][0]
@@ -519,13 +534,12 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, e_jpl, 
 
         if flux > 0:
             mag_sep = -2.5*math.log10(flux)+zeropt
-            print mag_sep
             all_mag.append(mag_sep)
             temp.append(x)
         
             # apply both eccentricity and magnitude conditions
             try:
-                if (abs(mag_sep - mean) < magrange) & (float(elim) - 0.1 < ecc < float(elim) + 0.1):
+                if (abs(mag_sep - mean) < magrange) & (float(elim) - 0.1 < ecc < float(e_jpl) + 0.1):
                     mRA_pix = septable[i][0]
                     mDEC_pix = septable[i][1]
                     
@@ -536,9 +550,7 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, e_jpl, 
                     mag_sep_list.append(mag_sep)
                     ecc_list.append(ecc)
                     x_list.append(x)
-                    y_list.append(y)
-                else: 
-                    print '  Both magnitude and eccentricity condition not satisfied'
+                    y_list.append(y)                    
         
             # if not both, try each
             except:              
@@ -555,7 +567,7 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, e_jpl, 
                     x_list.append(x)
                     y_list.append(y)
                     
-                    print "Eccentricity is outside range: calculated, {}, measured, {}".format(e_jpl, ecc)        
+                    print "WARNING: Eccentricity is outside range: calculated, {}, measured, {}".format(e_jpl, ecc)   
     
     good_neighbours = Table([index_list, flux_list, mag_sep_list, x_list, y_list, mRA_pix_list, mDEC_pix_list, ecc_list], 
                 names=('index', 'flux', 'mag', 'x', 'y', 'RA', 'DEC', 'ecc'))
@@ -601,10 +613,11 @@ def check_num_stars(table, size, objectname, expnum_p, username, password, famil
     if 0 < len(table) < 30:
         enough = False
         print 'Not enough stars () in the stamp ////////////////////////////////'.format(len(table))                    
-        if size < 500:   
-            get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
+        #if size < 500:   
+            #get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
         if size > 500:
             print 'SIZE IS AT MAX ({}) and not enough stars <<<<<<<<<<<<<<<<<<<'.format(size)
+            #get_stamps.get_one_stamp(objectname, expnum_p, 0.05, username, password, familyname)
     
     return r_new, r_old, enough 
     
@@ -657,27 +670,23 @@ def init_dirs(familyname, objectname):
 
 
 def add_day(time_end, date_range_t):
-        print "WARNING: only searching for one day"
-        time_end_date = (((date_range_t.iso[-1]).split())[0]).split('-')
-        day_add_one = int(time_end_date[2])+1
-        if day_add_one < 10:
-            day = '0{}'.format(day_add_one)
+    print "WARNING: only searching for one day"
+    time_end_date = (((date_range_t.iso[-1]).split())[0]).split('-')
+    day_add_one = int(time_end_date[2])+1
+    if day_add_one < 10:
+        day = '0{}'.format(day_add_one)
+    else:
+        day = day_add_one
+    month = int(time_end_date[1])
+    if day > 27:
+        day = 1
+        if month == 12:
+            month = 1
         else:
-            day = day_add_one
-        month = int(time_end_date[1])
-        if day > 27:
-            day = 1
-            if month == 12:
-                month = 1
-            else:
-                month = month + 1
-        else:
-            month = time_end_date[1]
-        time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], time_end_date[1], day)
-        
-        return time_end
-        
-        
+            month = month + 1
+
+    time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], month, day)        
+    return time_end
 
     
 if __name__ == '__main__':
