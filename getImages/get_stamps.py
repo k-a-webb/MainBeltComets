@@ -170,8 +170,10 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname):
                   "DIRECTION": direction,
                   "cutout": this_cutout,
                   "view": view}
-    
-    r = requests.get(BASEURL, params=params, auth=(username, password))
+    #import logging
+    #logging.getLogger().setLevel(logging.DEBUG)
+    r = requests.get(BASEURL, params=params, auth=(username, password), stream=True)
+    #logging.getLogger().setLevel(logging.ERROR)
     
     if type(RA) != float:
         RA = float(RA)
@@ -185,7 +187,10 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname):
           with open('{}/{}'.format(output_dir, postage_stamp_filename), 'w') as tmp_file:
               object_dir = 'asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, postage_stamp_filename)
               assert os.path.exists(object_dir)
-              tmp_file.write(r.content)
+              #for chunk in r.iter_content(50):
+              #    tmp_file.write(chunk)
+              #tmp_file.write(r.content)
+              tmp_file.write(r.raw.read())
               storage.copy(object_dir, '{}/{}'.format(vos_dir, postage_stamp_filename))
           #os.unlink(object_dir)  # easier not to have them hanging around    
     
