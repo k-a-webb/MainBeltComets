@@ -218,7 +218,7 @@ def find_all_objects(familyname, objectname, expnum_p, username, password, ap, t
                             raise     
                         except ValueError, e:
                             print 'ERROR: {} **********'.format(e)
-                            #get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
+                            get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
                             raise
                 
                     os.unlink('{}/{}'.format(stamps_dir, file))    
@@ -230,7 +230,7 @@ def find_all_objects(familyname, objectname, expnum_p, username, password, ap, t
                     return table, exptime, zeropt, size, pvwcs, stamp_found
                     
                 except IOError, e:
-                    print 'ERROR: {} **********'.format(e)
+                    print 'ERROR: {} []][][][][][][][]'.format(e)
                     #get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
                     raise
         
@@ -398,7 +398,7 @@ def get_ell(familyname, objectname, expnum):
     a = ephemerides['dRA*cosD'][0]
     b = ephemerides['d(DEC)/dt'][0]
     e = (1-(b/a)**2)**0.5
-                    
+                        
     return e
 
 def change_date(date):
@@ -445,6 +445,16 @@ def sep_phot(data, ap, th):
     kronrad, krflag = sep.kron_radius(data, objs['x'], objs['y'], objs['a'], objs['b'], objs['theta'], ap)
     flux, fluxerr, flag = sep.sum_ellipse(data, objs['x'], objs['y'], objs['a'], objs['b'], objs['theta'], 2.5*kronrad, subpix=1)
     flag |= krflag  # combine flags into 'flag'
+   
+    r_min = 1.75  # minimum diameter = 3.5
+    use_circle = kronrad * np.sqrt(objs['a'] * objs['b']) < r_min
+    x = objs['x']
+    y = objs['y']
+    cflux, cfluxerr, cflag = sep.sum_circle(data, x[use_circle], y[use_circle],
+                                            r_min, subpix=1)
+    flux[use_circle] = cflux
+    fluxerr[use_circle] = cfluxerr
+    flag[use_circle] = cflag
    
     # write to ascii table
     table = Table([objs['x'], objs['y'], flux, objs['a'], objs['b']], names=('x', 'y', 'flux', 'a', 'b'))
@@ -538,37 +548,35 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, e_jpl, 
             temp.append(x)
         
             # apply both eccentricity and magnitude conditions
-            try:
-                if (abs(mag_sep - mean) < magrange) & (float(elim) - 0.1 < ecc < float(e_jpl) + 0.1):
-                    mRA_pix = septable[i][0]
-                    mDEC_pix = septable[i][1]
-                    
-                    index_list.append(i)
-                    flux_list.append(flux)
-                    mRA_pix_list.append(mRA_pix)
-                    mDEC_pix_list.append(mDEC_pix)
-                    mag_sep_list.append(mag_sep)
-                    ecc_list.append(ecc)
-                    x_list.append(x)
-                    y_list.append(y)                    
-        
+            if (abs(mag_sep - mean) < magrange) & (float(e_jpl) - 0.1 < ecc < float(e_jpl) + 0.1):
+                mRA_pix = septable[i][0]
+                mDEC_pix = septable[i][1]
+                
+                index_list.append(i)
+                flux_list.append(flux)
+                mRA_pix_list.append(mRA_pix)
+                mDEC_pix_list.append(mDEC_pix)
+                mag_sep_list.append(mag_sep)
+                ecc_list.append(ecc)
+                x_list.append(x)
+                y_list.append(y)   
+                        
             # if not both, try each
-            except:              
-                if (abs(mag_sep - mean) < magrange):
-                    mRA_pix = septable[i][0]
-                    mDEC_pix = septable[i][1]
+            elif (abs(mag_sep - mean) < magrange):
+                mRA_pix = septable[i][0]
+                mDEC_pix = septable[i][1]
 
-                    index_list.append(i)
-                    flux_list.append(flux)
-                    mRA_pix_list.append(mRA_pix)
-                    mDEC_pix_list.append(mDEC_pix)
-                    mag_sep_list.append(mag_sep)
-                    ecc_list.append(ecc)
-                    x_list.append(x)
-                    y_list.append(y)
+                index_list.append(i)
+                flux_list.append(flux)
+                mRA_pix_list.append(mRA_pix)
+                mDEC_pix_list.append(mDEC_pix)
+                mag_sep_list.append(mag_sep)
+                ecc_list.append(ecc)
+                x_list.append(x)
+                y_list.append(y)
+                                
+                print "WARNING: Eccentricity is outside range: calculated, {}, measured, {}".format(e_jpl, ecc)       
                     
-                    print "WARNING: Eccentricity is outside range: calculated, {}, measured, {}".format(e_jpl, ecc)   
-    
     good_neighbours = Table([index_list, flux_list, mag_sep_list, x_list, y_list, mRA_pix_list, mDEC_pix_list, ecc_list], 
                 names=('index', 'flux', 'mag', 'x', 'y', 'RA', 'DEC', 'ecc'))
                     
