@@ -144,7 +144,11 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
     if enough == False:
         return
     
-    r_pix = exptime * ( (ra_dot)**2 + (dec_dot)**2 )**0.5 / (3600 * 0.184)     
+    err = 50.0
+    r_pix = exptime * ( (ra_dot)**2 + (dec_dot)**2 )**0.5 / (3600 * 0.184)
+    r_pix_err = exptime * (err/100) * ( abs(ra_dot) + abs(dec_dot) ) / (3600 * 0.184)
+    assert r_pix_err != 0
+    print '>>>>>>> Error allowance is set to {} percent'.format(err)
         
     try:
         i_list = find_neighbours(table, objectname, expnum_p, pvwcs, r_err)
@@ -156,7 +160,7 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
                 ascii.write(table, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum_p))
                 return
                 
-        good_neighbours, mean = iden_good_neighbours(expnum_p, i_list, table, zeropt, mag_list_jpl, r_pix, pvwcs)
+        good_neighbours, mean = iden_good_neighbours(expnum_p, i_list, table, zeropt, mag_list_jpl, r_pix, r_pix_err, pvwcs)
         print good_neighbours
 
         print_output(familyname, objectname, expnum_p, good_neighbours, ap, th)
@@ -186,7 +190,7 @@ def get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, 
                 storage.copy('{}/{}'.format(vos_dir, file), file_path)
                 try:
                     with fits.open('{}/{}'.format(stamps_dir, file)) as hdulist: 
-                        print hdulist.info()
+                        #print hdulist.info()
                         
                         try:
                             if hdulist[0].data is None:
@@ -450,8 +454,7 @@ def find_neighbours(septable, objectname, expnum, pvwcs, r_err):
                 pDEC = float(line.split()[4])
                 
                 pRA_pix, pDEC_pix = pvwcs.sky2xy(pRA, pDEC) # convert from WCS to pixels
-                #print " Predicted RA and DEC: {}  {}".format(pRA, pDEC)
-                #print "  in pixels: {} {}".format(pRA_pix, pDEC_pix)
+                print "  Predicted RA and DEC: {}  {}".format(pRA_pix, pDEC_pix)
                 
                 # parse through table and get RA and DEC closest to predicted coordinates (in pixels)
                 coords = np.array([pRA_pix, pDEC_pix])
@@ -477,7 +480,7 @@ def find_neighbours(septable, objectname, expnum, pvwcs, r_err):
     return i_list'''
     
     
-def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, pvwcs):
+def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, r_pix_err, pvwcs):
     '''
     Selects nearest neighbour object from predicted coordinates as object of interest
     In order:
@@ -519,7 +522,7 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, 
             all_mag.append(mag_sep)
         
             # apply both eccentricity and magnitude conditions
-            if (abs(mag_sep - mean) < magrange) & (float(r_pix) - 1 < r < float(r_pix) + 1):
+            if (abs(mag_sep - mean) < magrange) & (abs(r-r_pix) < r_pix_err):
                 mRA_pix = septable[i][0]
                 mDEC_pix = septable[i][1]
                 
@@ -532,8 +535,8 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, 
                 x_list.append(x)
                 y_list.append(y)   
                 
-                print r_pix
-                print r
+                print 'Theoretical: {} +/- {}'.format(r_pix, r_pix_err)
+                print 'Measured values: {}, {} {}'.format(r, a, b)
                         
             # if not both, try each
             elif (abs(mag_sep - mean) < magrange):
@@ -549,8 +552,8 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, 
                 x_list.append(x)
                 y_list.append(y)
                 
-                print r_pix
-                print r
+                print 'Theoretical: {} +/- {}'.format(r_pix, r_pix_err)
+                print 'Measured values: {}, {} {}'.format(r, a, b)
                                 
                 print "WARNING: Ellipticity is outside range: calculated, {}, measured, {}".format(r_pix, r)       
                     
