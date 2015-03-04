@@ -10,7 +10,6 @@ from get_stamps import get_stamps, cutout
 from sep_phot import iterate_thru_images
 from ossos_scripts import storage
 
-
 def main():
     """
     Input asteroid family name and an asteroid number and get out photometry values
@@ -23,7 +22,7 @@ def main():
                          preforms photometry on a specified object given an aperture size and threshold, \
                         and then selects the object in the image from the predicted coordinates, magnitude, and eventually shape')
 
-    parser.add_argument("--filter",
+    parser.add_argument("--filter", '-fil',
                     action="store",
                     default='r',
                     dest="filter",
@@ -41,15 +40,15 @@ def main():
                     action='store',
                     default=0.01,
                     help='Radius (degree) of circle of cutout postage stamp.')
-    parser.add_argument("--aperture", '-a',
+    parser.add_argument("--aperture", '-ap',
                     action='store',
                     default=10.0,
                     help='aperture (degree) of circle for photometry.')
-    parser.add_argument("--thresh", '-t',
+    parser.add_argument("--thresh", '-th',
                     action='store',
                     default=5.0,
                     help='threshold value.')
-    parser.add_argument("--object", '-o',
+    parser.add_argument("--object", '-obj',
                     action='store',
                     default='54286',
                     help='the object to preform photometry on')
@@ -82,8 +81,8 @@ def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', ra
     image_list_path = 'asteroid_families/{}/{}_images_test.txt'.format(familyname, familyname) # USING TEST FILE
     print "WARNING: USING A TEST FILE ***************************************************************" 
     if  os.path.exists(image_list_path):
-        table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['Object', 'Image', 'RA', 'DEC'], sep=' ')
-        for row in range(5, 6):#len(table)):
+        table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['Object', 'Image', 'RA', 'DEC'], sep=' ', dtype={'Object':object})
+        for row in range(0,4):#len(table)):
             print '\n----- Searching for {} {} -----'.format(table['Object'][row], table['Image'][row])
             vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
             postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(table['Object'][row], table['Image'][row], table['RA'][row], table['DEC'][row])
@@ -96,7 +95,7 @@ def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', ra
     else:  
         go_the_long_way(familyname, filtertype, imagetype)
 
-def fo_the_long_way(familyname, filtertype, imagetype):
+def go_the_long_way(familyname, filtertype, imagetype):
         
     image_list, expnum_list, ra_list, dec_list = get_image_info(familyname, filtertype, imagetype) 
     

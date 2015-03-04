@@ -13,13 +13,7 @@ from astropy.time import Time
 import argparse
 from scipy.spatial import cKDTree
 import math
-#from pyraf import iraf
 import pandas as pd
-
-client = vos.Client()
-
-import sys
-sys.path.append('/Users/admin/Desktop/MainBeltComets/getImages/ossos_scripts/')
 
 from ossos_scripts import storage
 import ossos_scripts.wcs as wcs
@@ -27,6 +21,8 @@ from ossos_scripts.storage import get_astheader, exists
 from get_images import get_image_info
 from find_family import find_family_members
 import get_stamps
+
+client = vos.Client()
 
 ''' 
 Preforms photometry on .fits files given an input of family name and object name
@@ -75,13 +71,10 @@ def main():
                         default='p',
                         choices=['o', 'p', 's'], 
                         help="restrict type of image (unprocessed, reduced, calibrated)")
-    parser.add_argument('--elim', '-el',
-                        default='0.6',
-                        help="limit on degree of ellipticity")
                             
     args = parser.parse_args()
     
-    find_(args.family, args.object, float(args.aperture), float(args.thresh), args.filter, args.type)
+    find_objects_by_phot(args.family, args.object, float(args.aperture), float(args.thresh), args.filter, args.type)
     
 def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=3.5, filtertype='r', imagetype='p'):
 
@@ -114,12 +107,12 @@ def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=3.5, filtertyp
     if objectname == None:
         for index, imageobject in enumerate(image_list):
             print 'Finding asteroid {} in family {} '.format(objectname, familyname)
-            iterate_thru_images(familyname, imageobject, expnum_list[index], ap, th, filtertype, imagetype, elim)    
+            iterate_thru_images(familyname, imageobject, expnum_list[index], ap, th, filtertype, imagetype)    
     else:  
         for index, imageobject in enumerate(image_list):
             if objectname == imageobject:
                 print 'Finding asteroid {} in family {} '.format(objectname, familyname)
-                iterate_thru_images(familyname, objectname, expnum_list[index], ap, th, filtertype, imagetype, elim)
+                iterate_thru_images(familyname, objectname, expnum_list[index], ap, th, filtertype, imagetype)
         
 
 def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap=10.0, th=5.0, filtertype='r', imagetype='p'):
@@ -151,7 +144,7 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
     if enough == False:
         return
     
-    r_pix = exptime * math.sqrt( (ra_dot)**2 + (dec_dot)**2 ) / (3600 * 0.184)     
+    r_pix = exptime * ( (ra_dot)**2 + (dec_dot)**2 )**0.5 / (3600 * 0.184)     
         
     try:
         i_list = find_neighbours(table, objectname, expnum_p, pvwcs, r_err)
@@ -650,7 +643,8 @@ def init_dirs(familyname, objectname):
 
     
     # initiate local directories
-    dir_path_base = '/Users/admin/Desktop/MainBeltComets/getImages/asteroid_families'
+    dir_path = os.path.dirname(os.path.abspath(__file__))
+    dir_path_base = '{}/asteroid_families'.format(dir_path)
     global family_dir
     family_dir = os.path.join(dir_path_base, familyname)
     if os.path.isdir(family_dir) == False:

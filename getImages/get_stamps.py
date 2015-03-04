@@ -62,7 +62,8 @@ def get_stamps(familyname, username, password, radius=0.01, suffix=None):
     
     print "----- Cutting postage stamps of objects in family {}  from CFHT/MegaCam images -----".format(familyname)	                  
     
-    dir_path_base = '/Users/admin/Desktop/MainBeltComets/getImages/asteroid_families'
+    dir_path = os.path.dirname(os.path.abspath(__file__))
+    dir_path_base = '{}/asteroid_families'.format(dir_path)
     family_dir = os.path.join(dir_path_base, familyname)
     if os.path.isdir(family_dir) == False:
         print "Invalid family name or directory does not exist"
@@ -107,7 +108,8 @@ def get_one_stamp(objectname, expnum, radius, username, password, familyname):
     
     print "-- Cutting postage stamps of {} {}".format(objectname, expnum)	                  
     
-    dir_path_base = '/Users/admin/Desktop/MainBeltComets/getImages/asteroid_families'
+    dir_path = os.path.dirname(os.path.abspath(__file__))
+    dir_path_base = '{}/asteroid_families'.format(dir_path)
     family_dir = os.path.join(dir_path_base, familyname)
     if os.path.isdir(family_dir) == False:
         print "Invalid family name or directory does not exist"
@@ -152,6 +154,7 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname):
     RA = 21.1236333333
     DEC = 11.8697277778
     '''
+    
     vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
     output_dir = 'asteroid_families/{}/{}_stamps'.format(familyname, familyname)
     if os.path.isdir(output_dir) == False:
@@ -187,10 +190,10 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname):
           with open('{}/{}'.format(output_dir, postage_stamp_filename), 'w') as tmp_file:
               object_dir = 'asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, postage_stamp_filename)
               assert os.path.exists(object_dir)
-              #for chunk in r.iter_content(50):
-              #    tmp_file.write(chunk)
+              for chunk in r.iter_content(50):
+                  tmp_file.write(chunk)
               #tmp_file.write(r.content)
-              tmp_file.write(r.raw.read())
+              #tmp_file.write(r.raw.read())
               storage.copy(object_dir, '{}/{}'.format(vos_dir, postage_stamp_filename))
           #os.unlink(object_dir)  # easier not to have them hanging around    
     
@@ -332,16 +335,17 @@ def change_date(date):
     return date_new    
 
 def add_day(time_end, date_range_t):
-        print "WARNING: only searching for one day"
-        time_end_date = (((date_range_t.iso[-1]).split())[0]).split('-')
-        day_add_one = int(time_end_date[2])+1
-        if day_add_one < 10:
-            day = '0{}'.format(day_add_one)
-        else:
-            day = day_add_one
-        time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], time_end_date[1], day)
         
-        return time_end
+    print "WARNING: only searching for one day"
+    time_end_date = (((date_range_t.iso[-1]).split())[0]).split('-')
+    day_add_one = int(time_end_date[2])+1
+    if day_add_one < 10:
+        day = '0{}'.format(day_add_one)
+    else:
+        day = day_add_one
+    time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], time_end_date[1], day)
+    
+    return time_end    
     	
 if __name__ == '__main__':
     main()	
