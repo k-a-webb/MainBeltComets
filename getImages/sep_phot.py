@@ -129,15 +129,15 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
     
     try:
         print "-- Querying JPL Horizon's ephemeris"
-        ra_dot, dec_dot = get_ell(familyname, objectname, expnum_p)
-        mag_list_jpl, r_err = get_mag_radius(familyname, objectname)
+        mag_list_jpl, r_err = get_mag_rad(familyname, objectname)
+        ra_dot, dec_dot = get_coords_dot(familyname, objectname, expnum_p)
     except Exception, e:
         print 'WARNING: No images exist, {}'.format(e)
         raise
       
     try:
         print "-- Preforming photometry on image {} ".format(expnum_p)
-        table, exptime, zeropt, size, pvwcs, stamp_found = find_all_objects(familyname, objectname, expnum_p, username, password, ap, th, filtertype, imagetype)
+        table, exptime, zeropt, size, pvwcs, stamp_found = get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, filtertype, imagetype)
     except Exception, e:
         print "ERROR: Error while doing photometry, {}".format(e)
         return
@@ -170,7 +170,7 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
         
         '''if len(good_neighbours) == 1:
             print '-- Cutting out recentered postage stamp'
-            recut_stamp(familyname, objectname, expnum_p, good_neighbours, r_old, username, password)
+            cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, r_old, username, password)
         '''
         
     except TypeError, e:
@@ -180,7 +180,8 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
         #get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
         return            
                                     
-def find_all_objects(familyname, objectname, expnum_p, username, password, ap, th, filtertype, imagetype):    
+def get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, filtertype, imagetype):    
+    
     stamp_found = False      
     for file in client.listdir(vos_dir): # images named with convention: object_expnum_RA_DEC.fits
         if file.endswith('.fits') == True:
@@ -235,15 +236,92 @@ def find_all_objects(familyname, objectname, expnum_p, username, password, ap, t
                     print 'ERROR: {} []][][][][][][][]'.format(e)
                     #get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
                     raise
+                                        
+def get_mag_rad(familyname, objectname):
+    
+    if type(objectname) is not str:
+        objectname = str(objectname)
+    
+    # from familyname_images.txt get date range of images for objectname
+    date_range = []
+    with open('asteroid_families/{}/{}_images.txt'.format(familyname, familyname)) as infile:
+        for line in infile.readlines()[1:]:
+            if len(line.split()) > 0:
+                if objectname == line.split()[0]:
+                    date_range.append(float(line.split()[5]))   
+                    
+    date_range_t = Time(date_range, format='mjd', scale='utc')
+    assert  len(date_range_t.iso) > 0
+    time_start = ((date_range_t.iso[0]).split())[0] + ' 00:00:00.0'
+    time_end = ((date_range_t.iso[-1]).split())[0] + ' 00:00:00.0'
+
+    if time_start == time_end:
+        time_end = add_day(time_end, date_range_t)
         
-def recut_stamp(familyname, objectname, expnum_p, object_data, r_old, username, password):
+    print " Date range in query: {} -- {}".format(time_start, time_end)
+
+    # change date format from 01-01-2001 00:00 to 01-Jan-2001 00:00
+    date_start = change_date(time_start)
+    date_end = change_date(time_end)
+    
+    ephemerides = query_jpl(objectname, date_start, date_end, params=[9, 36])
+    
+    mag_list =  np.array(ephemerides.icol(2))
+    ra_avg = np.mean(np.mean(ephemerides.icol(3)))
+    dec_avg = np.mean(np.mean(ephemerides.icol(4)))
         
-    if object_data is not None:
-        #for i in range(0, len(object_data)):
-            # objectname, expnum_p, r_new, RA, DEC, username, password, familyname
-        print '-- Cutting recentered stamp'
-        get_stamps.centered_stamp(objectname, expnum_p, r_old, object_data[0][5], object_data[0][6], username, password, familyname)
-                            
+    if ra_avg > dec_avg:
+        r_err = ra_avg / 0.184
+    else:
+        r_err = dec_avg / 0.184
+
+    if r_err < 25: # 0.003 deg * 3600 "/deg / 0.187 "/pix
+        r_err = 25
+    
+    return mag_list, r_err
+
+def get_coords_dot(familyname, objectname, expnum):
+    '''
+    Queries the JPL Horizon's ephemeris for rate of change of RA and DEC for a specific day
+    '''
+    
+    if type(objectname) is not str:
+        objectname = str(objectname)
+    
+    # from familyname_images.txt get date range of images for objectname
+    image_table = pd.read_table(image_list_path, usecols=[0, 1, 5], header=0, names=['Object', 'Image', 'time'], sep=' ', dtype={'Object':object})
+    index = image_table.query(('Image == "{}"'.format(expnum)) and ('Object == "{}"'.format(objectname)))
+
+    date = index['time']          
+    date_t = Time(date, format='mjd', scale='utc')
+    assert  len(date_t.iso) > 0
+
+    time_start = (date_t.iso)[0].split()[0]+' 00:00:00.0'
+    
+    time_end_date = (((date_t.iso[0]).split())[0]).split('-')
+    day_add_one = int(time_end_date[2])+1
+    if day_add_one < 10:
+        day = '0{}'.format(day_add_one)
+    else:
+        day = day_add_one
+    if day > 27:
+        day = 1
+        month = int(time_end_date[1]) + 1
+    else:
+        month = time_end_date[1]
+    time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], month, day)
+        
+    # change date format from 01-01-2001 00:00 to 01-Jan-2001 00:00
+    date_start = change_date(time_start)
+    date_end = change_date(time_end)
+    
+    ephemerides = query_jpl(objectname, date_start, date_end, params=[3])
+    
+    ra_dot = ephemerides['dRA*cosD'][0]
+    dec_dot = ephemerides['d(DEC)/dt'][0]
+                        
+    return ra_dot, dec_dot
+
 def query_jpl(objectname, time_start, time_end, params, step=1, su='d'):
     
     # Construct the query url
@@ -316,106 +394,6 @@ def query_jpl(objectname, time_start, time_end, params, step=1, su='d'):
     ephemerides = pd.DataFrame.from_csv(ephemCSVfile)
     
     return ephemerides
-    
-def get_mag_radius(familyname, objectname):
-    
-    if type(objectname) is not str:
-        objectname = str(objectname)
-    
-    # from familyname_images.txt get date range of images for objectname
-    date_range = []
-    with open('asteroid_families/{}/{}_images.txt'.format(familyname, familyname)) as infile:
-        for line in infile.readlines()[1:]:
-            if len(line.split()) > 0:
-                if objectname == line.split()[0]:
-                    date_range.append(float(line.split()[5]))   
-                    
-    date_range_t = Time(date_range, format='mjd', scale='utc')
-    assert  len(date_range_t.iso) > 0
-    time_start = ((date_range_t.iso[0]).split())[0] + ' 00:00:00.0'
-    time_end = ((date_range_t.iso[-1]).split())[0] + ' 00:00:00.0'
-
-    if time_start == time_end:
-        time_end = add_day(time_end, date_range_t)
-        
-    print " Date range in query: {} -- {}".format(time_start, time_end)
-
-    # change date format from 01-01-2001 00:00 to 01-Jan-2001 00:00
-    date_start = change_date(time_start)
-    date_end = change_date(time_end)
-    
-    ephemerides = query_jpl(objectname, date_start, date_end, params=[9, 36])
-    
-    mag_list =  np.array(ephemerides.icol(2))
-    ra_avg = np.mean(np.mean(ephemerides.icol(3)))
-    dec_avg = np.mean(np.mean(ephemerides.icol(4)))
-        
-    if ra_avg > dec_avg:
-        r_err = ra_avg / 0.184
-    else:
-        r_err = dec_avg / 0.184
-
-    if r_err < 25: # 0.003 deg * 3600 "/deg / 0.187 "/pix
-        r_err = 25
-    
-    return mag_list, r_err
-
-def get_ell(familyname, objectname, expnum):
-    '''
-    Queries the JPL Horizon's ephemeris for rate of change of RA and DEC for a specific day
-    '''
-    
-    if type(objectname) is not str:
-        objectname = str(objectname)
-    
-    # from familyname_images.txt get date range of images for objectname
-    image_table = pd.read_table(image_list_path, usecols=[0, 1, 5], header=0, names=['Object', 'Image', 'time'], sep=' ', dtype={'Object':object})
-    index = image_table.query(('Image == "{}"'.format(expnum)) and ('Object == "{}"'.format(objectname)))
-
-    date = index['time']          
-    date_t = Time(date, format='mjd', scale='utc')
-    assert  len(date_t.iso) > 0
-
-    time_start = (date_t.iso)[0].split()[0]+' 00:00:00.0'
-    
-    time_end_date = (((date_t.iso[0]).split())[0]).split('-')
-    day_add_one = int(time_end_date[2])+1
-    if day_add_one < 10:
-        day = '0{}'.format(day_add_one)
-    else:
-        day = day_add_one
-    if day > 27:
-        day = 1
-        month = int(time_end_date[1]) + 1
-    else:
-        month = time_end_date[1]
-    time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], month, day)
-        
-    # change date format from 01-01-2001 00:00 to 01-Jan-2001 00:00
-    date_start = change_date(time_start)
-    date_end = change_date(time_end)
-    
-    ephemerides = query_jpl(objectname, date_start, date_end, params=[3])
-    
-    ra_dot = ephemerides['dRA*cosD'][0]
-    dec_dot = ephemerides['d(DEC)/dt'][0]
-                        
-    return ra_dot, dec_dot
-
-def change_date(date):
-    '''
-    Convert time format 01-01-2001 00:00:00.00 to 01-Jan-2001 00:00
-    '''
-    date_split = date.split('-')
-    date_strip = (date_split[2]).split()
-    month = int(date_split[1])
-    month_name = ['nan', 'Jan', "Feb", 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-    for i in range(0,13):
-        if i == month:
-            month_jpl = month_name[i]
-    date_new = date_split[0]+'-'+month_jpl+'-'+date_strip[0]+' 00:00'
-    
-    return date_new    
     
 def sep_phot(data, ap, th):
     ''' 
@@ -647,7 +625,7 @@ def print_output(familyname, objectname, expnum_p, object_data, ap, th):
                 for i in range(0, len(object_data)):
                     #'Object', "Image", 'flux', 'mag', 'RA', 'DEC', 'ecc', 'index'
                     #index      flux          mag            x             y      
-                    outfile.write('{} {} {} {} {} {} {} {}\n'.format(
+                    outfile.write('{} {} {} {} {} {}\n'.format(
                           objectname, expnum_p, object_data[i][1], object_data[i][2], object_data[i][3], object_data[i][4], 
                           object_data[i][0]))
             except:
@@ -655,6 +633,14 @@ def print_output(familyname, objectname, expnum_p, object_data, ap, th):
     
         return object_data
                     
+def cut_centered_stamp(familyname, objectname, expnum_p, object_data, r_old, username, password):
+        
+    if object_data is not None:
+        #for i in range(0, len(object_data)):
+            # objectname, expnum_p, r_new, RA, DEC, username, password, familyname
+        print '-- Cutting recentered stamp'
+        get_stamps.centered_stamp(objectname, expnum_p, r_old, object_data[0][5], object_data[0][6], username, password, familyname)                    
+
 def init_dirs(familyname, objectname):
     
     # initiate vos directories 
@@ -664,7 +650,7 @@ def init_dirs(familyname, objectname):
 
     
     # initiate local directories
-    dir_path_base = '/Desktop/MainBeltComets/getImages/asteroid_families'
+    dir_path_base = '/Users/admin/Desktop/MainBeltComets/getImages/asteroid_families'
     global family_dir
     family_dir = os.path.join(dir_path_base, familyname)
     if os.path.isdir(family_dir) == False:
@@ -685,6 +671,7 @@ def init_dirs(familyname, objectname):
 
 
 def add_day(time_end, date_range_t):
+    
     print "WARNING: only searching for one day"
     time_end_date = (((date_range_t.iso[-1]).split())[0]).split('-')
     day_add_one = int(time_end_date[2])+1
@@ -703,6 +690,20 @@ def add_day(time_end, date_range_t):
     time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], month, day)        
     return time_end
 
+def change_date(date):
+    '''
+    Convert time format 01-01-2001 00:00:00.00 to 01-Jan-2001 00:00
+    '''
+    date_split = date.split('-')
+    date_strip = (date_split[2]).split()
+    month = int(date_split[1])
+    month_name = ['nan', 'Jan', "Feb", 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    for i in range(0,13):
+        if i == month:
+            month_jpl = month_name[i]
+    date_new = date_split[0]+'-'+month_jpl+'-'+date_strip[0]+' 00:00'
+    
+    return date_new   
     
 if __name__ == '__main__':
     main()
