@@ -129,7 +129,7 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
     
     try:
         print "-- Querying JPL Horizon's ephemeris"
-        e_jpl = get_ell(familyname, objectname, expnum_p)
+        ra_dot, dec_dot = get_ell(familyname, objectname, expnum_p)
         mag_list_jpl, r_err = get_mag_radius(familyname, objectname)
     except Exception, e:
         print 'WARNING: No images exist, {}'.format(e)
@@ -150,7 +150,9 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
     r_new, r_old, enough = check_num_stars(table, size, objectname, expnum_p, username, password, familyname)
     if enough == False:
         return
-                    
+    
+    r_pix = exptime * math.sqrt( (ra_dot)**2 + (dec_dot)**2 ) / (3600 * 0.184)     
+        
     try:
         i_list = find_neighbours(table, objectname, expnum_p, pvwcs, r_err)
         if len(i_list) == 0:
@@ -161,7 +163,7 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
                 ascii.write(table, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum_p))
                 return
                 
-        good_neighbours, mean = iden_good_neighbours(expnum_p, i_list, table, zeropt, mag_list_jpl, e_jpl, pvwcs)
+        good_neighbours, mean = iden_good_neighbours(expnum_p, i_list, table, zeropt, mag_list_jpl, r_pix, pvwcs)
         print good_neighbours
 
         print_output(familyname, objectname, expnum_p, good_neighbours, ap, th)
@@ -173,9 +175,9 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
         
     except TypeError, e:
         return
-    except ValueError:
-        print 'WARNING: Only one object in image'
-        get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
+    except ValueError, e:
+        print 'ERROR: {}'.format(e)
+        #get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
         return            
                                     
 def find_all_objects(familyname, objectname, expnum_p, username, password, ap, th, filtertype, imagetype):    
@@ -218,7 +220,7 @@ def find_all_objects(familyname, objectname, expnum_p, username, password, ap, t
                             raise     
                         except ValueError, e:
                             print 'ERROR: {} **********'.format(e)
-                            get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
+                            #get_stamps.get_one_stamp(objectname, expnum_p, 0.03, username, password, familyname)
                             raise
                 
                     os.unlink('{}/{}'.format(stamps_dir, file))    
@@ -395,11 +397,10 @@ def get_ell(familyname, objectname, expnum):
     
     ephemerides = query_jpl(objectname, date_start, date_end, params=[3])
     
-    a = ephemerides['dRA*cosD'][0]
-    b = ephemerides['d(DEC)/dt'][0]
-    e = (1-(b/a)**2)**0.5
+    ra_dot = ephemerides['dRA*cosD'][0]
+    dec_dot = ephemerides['d(DEC)/dt'][0]
                         
-    return e
+    return ra_dot, dec_dot
 
 def change_date(date):
     '''
@@ -478,8 +479,8 @@ def find_neighbours(septable, objectname, expnum, pvwcs, r_err):
                 pDEC = float(line.split()[4])
                 
                 pRA_pix, pDEC_pix = pvwcs.sky2xy(pRA, pDEC) # convert from WCS to pixels
-                print " Predicted RA and DEC: {}  {}".format(pRA, pDEC)
-                print "  in pixels: {} {}".format(pRA_pix, pDEC_pix)
+                #print " Predicted RA and DEC: {}  {}".format(pRA, pDEC)
+                #print "  in pixels: {} {}".format(pRA_pix, pDEC_pix)
                 
                 # parse through table and get RA and DEC closest to predicted coordinates (in pixels)
                 coords = np.array([pRA_pix, pDEC_pix])
@@ -505,7 +506,7 @@ def find_neighbours(septable, objectname, expnum, pvwcs, r_err):
     return i_list'''
     
     
-def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, e_jpl, pvwcs):
+def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, pvwcs):
     '''
     Selects nearest neighbour object from predicted coordinates as object of interest
     In order:
@@ -520,10 +521,9 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, e_jpl, 
     flux_list = []
     mRA_pix_list = []
     mDEC_pix_list = []
-    ecc_list = []
+    #ecc_list = []
     x_list = []
     y_list = []
-    temp = []
     
     mean = np.mean(mag_list_jpl)
     maxmag = np.amax(mag_list_jpl)
@@ -540,15 +540,15 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, e_jpl, 
         y = septable[i][1]
         a = septable[i][3]
         b = septable[i][4]
-        ecc = (1-(b/a)**2)**0.5
+        
+        r = 2 * ( a**2 - b**2 )**0.5
 
         if flux > 0:
             mag_sep = -2.5*math.log10(flux)+zeropt
             all_mag.append(mag_sep)
-            temp.append(x)
         
             # apply both eccentricity and magnitude conditions
-            if (abs(mag_sep - mean) < magrange) & (float(e_jpl) - 0.1 < ecc < float(e_jpl) + 0.1):
+            if (abs(mag_sep - mean) < magrange) & (float(r_pix) - 1 < r < float(r_pix) + 1):
                 mRA_pix = septable[i][0]
                 mDEC_pix = septable[i][1]
                 
@@ -557,9 +557,12 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, e_jpl, 
                 mRA_pix_list.append(mRA_pix)
                 mDEC_pix_list.append(mDEC_pix)
                 mag_sep_list.append(mag_sep)
-                ecc_list.append(ecc)
+                #ecc_list.append(ecc)
                 x_list.append(x)
                 y_list.append(y)   
+                
+                print r_pix
+                print r
                         
             # if not both, try each
             elif (abs(mag_sep - mean) < magrange):
@@ -571,14 +574,17 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, e_jpl, 
                 mRA_pix_list.append(mRA_pix)
                 mDEC_pix_list.append(mDEC_pix)
                 mag_sep_list.append(mag_sep)
-                ecc_list.append(ecc)
+                #ecc_list.append(ecc)
                 x_list.append(x)
                 y_list.append(y)
+                
+                print r_pix
+                print r
                                 
-                print "WARNING: Eccentricity is outside range: calculated, {}, measured, {}".format(e_jpl, ecc)       
+                print "WARNING: Ellipticity is outside range: calculated, {}, measured, {}".format(r_pix, r)       
                     
-    good_neighbours = Table([index_list, flux_list, mag_sep_list, x_list, y_list, mRA_pix_list, mDEC_pix_list, ecc_list], 
-                names=('index', 'flux', 'mag', 'x', 'y', 'RA', 'DEC', 'ecc'))
+    good_neighbours = Table([index_list, flux_list, mag_sep_list, x_list, y_list], 
+                names=('index', 'flux', 'mag', 'x', 'y'))
                     
     if len(all_mag) == 0:
         print "WARNING: Flux of nearest neighbours measured to be 0.0 00000000000000000000"
@@ -621,11 +627,11 @@ def check_num_stars(table, size, objectname, expnum_p, username, password, famil
     if 0 < len(table) < 30:
         enough = False
         print 'Not enough stars () in the stamp ////////////////////////////////'.format(len(table))                    
-        #if size < 500:   
-            #get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
+        if size < 500:   
+            get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
         if size > 500:
             print 'SIZE IS AT MAX ({}) and not enough stars <<<<<<<<<<<<<<<<<<<'.format(size)
-            #get_stamps.get_one_stamp(objectname, expnum_p, 0.05, username, password, familyname)
+            get_stamps.get_one_stamp(objectname, expnum_p, 0.05, username, password, familyname)
     
     return r_new, r_old, enough 
     
@@ -640,9 +646,10 @@ def print_output(familyname, objectname, expnum_p, object_data, ap, th):
             try:
                 for i in range(0, len(object_data)):
                     #'Object', "Image", 'flux', 'mag', 'RA', 'DEC', 'ecc', 'index'
+                    #index      flux          mag            x             y      
                     outfile.write('{} {} {} {} {} {} {} {}\n'.format(
-                          objectname, expnum_p, object_data[i][1], object_data[i][2], object_data[i][5], object_data[i][6], 
-                          object_data[i][7], object_data[i][0]))
+                          objectname, expnum_p, object_data[i][1], object_data[i][2], object_data[i][3], object_data[i][4], 
+                          object_data[i][0]))
             except:
                 print "ERROR: cannot write to outfile <<<<<<<<<<<<<<<<<<<<<<<<<<"
     
@@ -657,7 +664,7 @@ def init_dirs(familyname, objectname):
 
     
     # initiate local directories
-    dir_path_base = '/Users/admin/Desktop/MainBeltComets/getImages/asteroid_families'
+    dir_path_base = '/Desktop/MainBeltComets/getImages/asteroid_families'
     global family_dir
     family_dir = os.path.join(dir_path_base, familyname)
     if os.path.isdir(family_dir) == False:
