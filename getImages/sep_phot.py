@@ -3,7 +3,6 @@ import io
 import sep
 import re
 import vos
-import tempfile
 import urllib2 as url
 import numpy as np
 from astropy.io import fits
@@ -14,6 +13,7 @@ import argparse
 from scipy.spatial import cKDTree
 import math
 import pandas as pd
+import sys
 
 from ossos_scripts import storage
 import ossos_scripts.wcs as wcs
@@ -130,11 +130,13 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
       
     try:
         print "-- Preforming photometry on image {} ".format(expnum_p)
-        table, exptime, zeropt, size, pvwcs, stamp_found = get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, filtertype, imagetype)
+        septable, exptime, zeropt, size, pvwcs, stamp_found = get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, filtertype, imagetype)
     except Exception, e:
         print "ERROR: Error while doing photometry, {}".format(e)
         return
-        
+    
+    table = append_table(septable, pvwcs, zeropt)
+    
     if stamp_found == False:
         print "WARNING: no stamps exist"
         get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
@@ -144,11 +146,13 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
     if enough == False:
         return
     
-    err = 50.0
+    err = 30.0
     r_pix = exptime * ( (ra_dot)**2 + (dec_dot)**2 )**0.5 / (3600 * 0.184)
     r_pix_err = exptime * (err/100) * ( abs(ra_dot) + abs(dec_dot) ) / (3600 * 0.184)
     assert r_pix_err != 0
     print '>>>>>>> Error allowance is set to {} percent'.format(err)
+    
+    compare_to_catalogue(table, pvwcs)
         
     try:
         i_list = find_neighbours(table, objectname, expnum_p, pvwcs, r_err)
@@ -176,7 +180,40 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
         print 'ERROR: {}'.format(e)
         #get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
         return            
-                                    
+       
+def append_table(table, pvwcs, zeropt):
+    
+    ra_list = []
+    dec_list = []
+    mag_sep_list = []
+    for row in range(len(table)):
+        try:
+            ra, dec = pvwcs.xy2sky(table['x'][row], table['y'][row])
+            ra_list.append(ra)
+            dec_list.append(dec)
+            mag_sep_list.append(-2.5*math.log10(table['flux'][row])+zeropt)
+        except:
+            print row
+    table['ra'] = ra_list
+    table['dec'] = dec_list
+    table['mag'] = mag_sep_list
+    return table
+
+def compare_to_catalogue(table, pvwcs):
+    
+    #convert sep table elements from pixels to WCS
+    pdtable = pd.DataFrame(np.array(table))
+    
+    Eall = pd.read_table('catalogue/Eall.photcat', usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag1'], sep='      |     |    |   |  ', engine='python')
+    Hall = pd.read_table('catalogue/Hall.photcat', usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag1'], sep='      |     |    |   |  ', engine='python')
+    Lall = pd.read_table('catalogue/Lall.photcat', usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag1'], sep='      |     |    |   |  ', engine='python')
+    Oall = pd.read_table('catalogue/Oall.photcat', usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag1'], sep='      |     |    |   |  ', engine='python')
+    
+    cattable = pd.concat([Eall, Hall, Lall, Oall])
+    cattable.reset_index(drop=True, inplace=True)
+    
+    
+    
 def get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, filtertype, imagetype):    
     
     stamp_found = False      
@@ -255,7 +292,7 @@ def get_mag_rad(familyname, objectname):
     if time_start == time_end:
         time_end = add_day(time_end, date_range_t)
         
-    print " Date range in query: {} -- {}".format(time_start, time_end)
+    #print " Date range in query: {} -- {}".format(time_start, time_end)
 
     # change date format from 01-01-2001 00:00 to 01-Jan-2001 00:00
     date_start = change_date(time_start)
@@ -272,8 +309,8 @@ def get_mag_rad(familyname, objectname):
     else:
         r_err = dec_avg / 0.184
 
-    if r_err < 25: # 0.003 deg * 3600 "/deg / 0.187 "/pix
-        r_err = 25
+    if r_err < 50: # 0.003 deg * 3600 "/deg / 0.187 "/pix
+        r_err = 50
     
     return mag_list, r_err
 
@@ -508,6 +545,8 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, 
     else:
         magrange = maxmag - minmag
     
+    print '  Theoretical: {} +/- {}'.format(r_pix, r_pix_err)
+    
     for i in i_list:
         flux = septable[i][2]
         x = septable[i][0]
@@ -535,10 +574,26 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, 
                 x_list.append(x)
                 y_list.append(y)   
                 
-                print 'Theoretical: {} +/- {}'.format(r_pix, r_pix_err)
-                print 'Measured values: {}, {} {}'.format(r, a, b)
-                        
-            # if not both, try each
+                
+                print '  Measured values for index {}: {}, {} {}'.format(i, r, a, b)
+            
+            elif (abs(r-r_pix) < r_pix_err):
+                mRA_pix = septable[i][0]
+                mDEC_pix = septable[i][1]
+
+                index_list.append(i)
+                flux_list.append(flux)
+                mRA_pix_list.append(mRA_pix)
+                mDEC_pix_list.append(mDEC_pix)
+                mag_sep_list.append(mag_sep)
+                #ecc_list.append(ecc)
+                x_list.append(x)
+                y_list.append(y)
+                
+                print '  Measured values for index {}: {}, {} {}'.format(i, r, a, b)
+                                
+                print "WARNING: Magnitude is outside range for index {}: calculated, {} +/- {}, measured, {}".format(i, mean, magrange, mag_sep)
+                
             elif (abs(mag_sep - mean) < magrange):
                 mRA_pix = septable[i][0]
                 mDEC_pix = septable[i][1]
@@ -552,22 +607,21 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, 
                 x_list.append(x)
                 y_list.append(y)
                 
-                print 'Theoretical: {} +/- {}'.format(r_pix, r_pix_err)
-                print 'Measured values: {}, {} {}'.format(r, a, b)
-                                
-                print "WARNING: Ellipticity is outside range: calculated, {}, measured, {}".format(r_pix, r)       
+                print magrange
+                print "WARNING: Ellipticity is outside range for index {}: calculated, {} +/- {}, measured, {}".format(i, r_pix, r_pix_err, r)
+                  
                     
     good_neighbours = Table([index_list, flux_list, mag_sep_list, x_list, y_list], 
                 names=('index', 'flux', 'mag', 'x', 'y'))
                     
     if len(all_mag) == 0:
-        print "WARNING: Flux of nearest neighbours measured to be 0.0 00000000000000000000"
+        print "WARNING: Flux of nearest neighbours measured to be 0.0"
         return
     
     if mRA_pix == None:
-        print "WARNING: Magnitude condition could not be satisfied 000000000000000000000"
+        print "WARNING: No condition could not be satisfied <<<<<<<<<<<<<<<<<<<<<<<<<<<<"
         print '  Nearest neighbour list: {}'.format(i_list)
-        print "  Mag mean, accepted error, and fitting mags: {} {} {} {}".format(mean, magrange, all_mag, temp)
+        print "  Mag mean, accepted error, and fitting mags: {} {} {}".format(mean, magrange, all_mag)
         ascii.write(septable, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum))
         return
         
