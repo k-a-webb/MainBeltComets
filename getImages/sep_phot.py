@@ -18,6 +18,8 @@ import sys
 from ossos_scripts import storage
 import ossos_scripts.wcs as wcs
 from ossos_scripts.storage import get_astheader, exists
+from ossos_scripts.util import match_lists
+
 from get_images import get_image_info
 from find_family import find_family_members
 import get_stamps
@@ -150,29 +152,28 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
     r_pix = exptime * ( (ra_dot)**2 + (dec_dot)**2 )**0.5 / (3600 * 0.184)
     r_pix_err = exptime * (err/100) * ( abs(ra_dot) + abs(dec_dot) ) / (3600 * 0.184)
     assert r_pix_err != 0
-    print '>>>>>>> Error allowance is set to {} percent'.format(err)
+    print '  Error allowance is set to {} percent'.format(err)
     
-    compare_to_catalogue(table, pvwcs)
-        
+    transients = compare_to_catalogue(table, pvwcs)
+
     try:
-        i_list = find_neighbours(table, objectname, expnum_p, pvwcs, r_err)
+        i_list = find_neighbours(transients, objectname, expnum_p, pvwcs, r_err)
         if len(i_list) == 0:
             print '-- Expanding radius of nearest neighbour search by 1.5x'
-            i_list = find_neighbours(table, objectname, expnum_p, pvwcs, 1.5*r_err)
+            i_list = find_neighbours(transients, objectname, expnum_p, pvwcs, 1.5*r_err)
             if len(i_list) == 0:
                 print 'WARNING: No nearest neighbours were found within {} ++++++++++++++++++++++'.format(r_err*1.5)
                 ascii.write(table, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum_p))
                 return
                 
-        good_neighbours, mean = iden_good_neighbours(expnum_p, i_list, table, zeropt, mag_list_jpl, r_pix, r_pix_err, pvwcs)
+        good_neighbours, mean = iden_good_neighbours(expnum_p, i_list, transients, zeropt, mag_list_jpl, r_pix, r_pix_err, pvwcs)
         print good_neighbours
 
         print_output(familyname, objectname, expnum_p, good_neighbours, ap, th)
         
-        '''if len(good_neighbours) == 1:
+        if len(good_neighbours) == 1:
             print '-- Cutting out recentered postage stamp'
-            cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, r_old, username, password)
-        '''
+            #cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, r_old, username, password)
         
     except TypeError, e:
         return
@@ -180,39 +181,6 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
         print 'ERROR: {}'.format(e)
         #get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
         return            
-       
-def append_table(table, pvwcs, zeropt):
-    
-    ra_list = []
-    dec_list = []
-    mag_sep_list = []
-    for row in range(len(table)):
-        try:
-            ra, dec = pvwcs.xy2sky(table['x'][row], table['y'][row])
-            ra_list.append(ra)
-            dec_list.append(dec)
-            mag_sep_list.append(-2.5*math.log10(table['flux'][row])+zeropt)
-        except:
-            print row
-    table['ra'] = ra_list
-    table['dec'] = dec_list
-    table['mag'] = mag_sep_list
-    return table
-
-def compare_to_catalogue(table, pvwcs):
-    
-    #convert sep table elements from pixels to WCS
-    pdtable = pd.DataFrame(np.array(table))
-    
-    Eall = pd.read_table('catalogue/Eall.photcat', usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag1'], sep='      |     |    |   |  ', engine='python')
-    Hall = pd.read_table('catalogue/Hall.photcat', usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag1'], sep='      |     |    |   |  ', engine='python')
-    Lall = pd.read_table('catalogue/Lall.photcat', usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag1'], sep='      |     |    |   |  ', engine='python')
-    Oall = pd.read_table('catalogue/Oall.photcat', usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag1'], sep='      |     |    |   |  ', engine='python')
-    
-    cattable = pd.concat([Eall, Hall, Lall, Oall])
-    cattable.reset_index(drop=True, inplace=True)
-    
-    
     
 def get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, filtertype, imagetype):    
     
@@ -434,7 +402,7 @@ def sep_phot(data, ap, th):
     Preforms photometry by SEP, similar to source extractor 
     '''
 
-    # Measure a spatially variable background of some image data (numpy array)
+    # Measure a spatially variable background of some image data (np array)
     try:    
         bkg = sep.Background(data) #, mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
     except:
@@ -472,6 +440,68 @@ def sep_phot(data, ap, th):
     # write to ascii table
     table = Table([objs['x'], objs['y'], flux, objs['a'], objs['b']], names=('x', 'y', 'flux', 'a', 'b'))
     return table
+    
+def append_table(table, pvwcs, zeropt):
+    
+    ra_list = []
+    dec_list = []
+    mag_sep_list = []
+    for row in range(len(table)):
+        try:
+            ra, dec = pvwcs.xy2sky(table['x'][row], table['y'][row])
+            ra_list.append(ra)
+            dec_list.append(dec)
+            mag_sep_list.append(-2.5*math.log10(table['flux'][row])+zeropt)
+        except:
+            print row
+    table['ra'] = ra_list
+    table['dec'] = dec_list
+    table['mag'] = mag_sep_list
+    return table
+
+def compare_to_catalogue(table, pvwcs):
+    
+    #convert sep table elements from pixels to WCS
+    septable = pd.DataFrame(np.array(table))
+    
+    Eall = pd.read_table('catalogue/Eall.photcat', usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag'], sep='      |     |    |   |  ', engine='python')
+    Hall = pd.read_table('catalogue/Hall.photcat', usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag'], sep='      |     |    |   |  ', engine='python')
+    Lall = pd.read_table('catalogue/Lall.photcat', usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag'], sep='      |     |    |   |  ', engine='python')
+    Oall = pd.read_table('catalogue/Oall.photcat', usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag'], sep='      |     |    |   |  ', engine='python')
+    catalogue = pd.concat([Eall, Hall, Lall, Oall])
+    catalogue.reset_index(drop=True, inplace=True)
+    
+    #pos1 = septable.as_matrix(columns=['ra', 'dec'])
+    #pos2 = catalogue.as_matrix(columns=['ra', 'dec'])
+    #match1, match2 = match_lists(pos1, pos2, tolerance=0.005111111)
+    #print match1, match2
+     
+    sep_tol = 100 * 0.184 / 3600 # pixels to degrees
+    mag_tol = 1
+    
+    trans_ra = []
+    trans_dec = []
+    trans_x = []
+    trans_y = []
+    trans_mag = []
+    trans_a = []
+    trans_b = []
+    for row in range(len(septable)):
+        #index = catalogue[( abs(catalogue.ra - septable['ra'][row]) < 0.0051111 )]
+        index = catalogue.query('({} < ra < {}) & ({} < dec < {}) & ({} < mag < {})'.format(septable['ra'][row]-sep_tol, septable['ra'][row]+sep_tol, 
+                                                                                            septable['dec'][row]-sep_tol, septable['dec'][row]+sep_tol,
+                                                                                            septable['mag'][row]-mag_tol, septable['mag'][row]+mag_tol))
+        if len(index) == 0:
+            trans_ra.append(septable['ra'][row])
+            trans_dec.append(septable['dec'][row])
+            trans_x.append(septable['x'][row])
+            trans_y.append(septable['y'][row])
+            trans_a.append(septable['a'][row])
+            trans_b.append(septable['b'][row])
+            trans_mag.append(septable['mag'][row])
+            
+    transients = Table([trans_x, trans_y, trans_a, trans_b, trans_ra ,trans_dec, trans_mag], names=['x', 'y', 'a', 'b', 'ra', 'dec', 'mag'])
+    return transients
 
 def find_neighbours(septable, objectname, expnum, pvwcs, r_err):
     '''
@@ -527,14 +557,11 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, 
         
     mRA_pix = None
     mag_sep_list = []
-    all_mag = []
     index_list = []
-    flux_list = []
     mRA_pix_list = []
     mDEC_pix_list = []
-    #ecc_list = []
-    x_list = []
-    y_list = []
+    ra_list = []
+    dec_list = []
     
     mean = np.mean(mag_list_jpl)
     maxmag = np.amax(mag_list_jpl)
@@ -548,33 +575,26 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, 
     print '  Theoretical: {} +/- {}'.format(r_pix, r_pix_err)
     
     for i in i_list:
-        flux = septable[i][2]
-        x = septable[i][0]
-        y = septable[i][1]
-        a = septable[i][3]
-        b = septable[i][4]
+        # table format: x, y, a, b, ra, dec, mag
+        mag_sep = septable[i][6]
+        a = septable[i][2]
+        b = septable[i][3]
         
         r = 2 * ( a**2 - b**2 )**0.5
 
-        if flux > 0:
-            mag_sep = -2.5*math.log10(flux)+zeropt
-            all_mag.append(mag_sep)
-        
+        if mag_sep > 0:
             # apply both eccentricity and magnitude conditions
             if (abs(mag_sep - mean) < magrange) & (abs(r-r_pix) < r_pix_err):
                 mRA_pix = septable[i][0]
                 mDEC_pix = septable[i][1]
                 
                 index_list.append(i)
-                flux_list.append(flux)
                 mRA_pix_list.append(mRA_pix)
                 mDEC_pix_list.append(mDEC_pix)
-                mag_sep_list.append(mag_sep)
-                #ecc_list.append(ecc)
-                x_list.append(x)
-                y_list.append(y)   
-                
-                
+                mag_sep_list.append(mag_sep) 
+                ra_list.append(septable[i][4])             
+                dec_list.append(septable[i][5])
+
                 print '  Measured values for index {}: {}, {} {}'.format(i, r, a, b)
             
             elif (abs(r-r_pix) < r_pix_err):
@@ -582,13 +602,11 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, 
                 mDEC_pix = septable[i][1]
 
                 index_list.append(i)
-                flux_list.append(flux)
                 mRA_pix_list.append(mRA_pix)
                 mDEC_pix_list.append(mDEC_pix)
                 mag_sep_list.append(mag_sep)
-                #ecc_list.append(ecc)
-                x_list.append(x)
-                y_list.append(y)
+                ra_list.append(septable[i][4])             
+                dec_list.append(septable[i][5])
                 
                 print '  Measured values for index {}: {}, {} {}'.format(i, r, a, b)
                                 
@@ -599,22 +617,20 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, 
                 mDEC_pix = septable[i][1]
 
                 index_list.append(i)
-                flux_list.append(flux)
                 mRA_pix_list.append(mRA_pix)
                 mDEC_pix_list.append(mDEC_pix)
                 mag_sep_list.append(mag_sep)
-                #ecc_list.append(ecc)
-                x_list.append(x)
-                y_list.append(y)
+                ra_list.append(septable[i][4])             
+                dec_list.append(septable[i][5])
                 
-                print magrange
+                print '  Measured magnitude and predicted: {} {}'.format(mag_sep, mag_list_jpl)
                 print "WARNING: Ellipticity is outside range for index {}: calculated, {} +/- {}, measured, {}".format(i, r_pix, r_pix_err, r)
                   
                     
-    good_neighbours = Table([index_list, flux_list, mag_sep_list, x_list, y_list], 
-                names=('index', 'flux', 'mag', 'x', 'y'))
+    good_neighbours = Table([index_list, mRA_pix_list, mDEC_pix_list, ra_list, dec_list, mag_sep_list], 
+                names=('index', 'x', 'y', 'ra', 'dec', 'mag'))
                     
-    if len(all_mag) == 0:
+    if len(index_list) == 0:
         print "WARNING: Flux of nearest neighbours measured to be 0.0"
         return
     
@@ -626,12 +642,6 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, 
         return
         
     else: 
-        #print "   Flux, mag: {}, {}".format(flux, mag_sep)     
-        mRA, mDEC = pvwcs.xy2sky(mRA_pix, mDEC_pix) # convert from pixels to WCS
-        #print " Measured RA and DEC: {}  {}".format(mRA, mDEC)
-        #print "  Coordinates: {} {}".format(mRA_pix, mDEC_pix)
-        #print " Difference: {} {}".format(mRA - pRA, mDEC - pDEC)
-        
         return good_neighbours, mean 
         
 def check_num_stars(table, size, objectname, expnum_p, username, password, familyname):
