@@ -14,6 +14,7 @@ from scipy.spatial import cKDTree
 import math
 import pandas as pd
 import sys
+from shapely.geometry import Polygon, Point
 
 from ossos_scripts import storage
 import ossos_scripts.wcs as wcs
@@ -136,7 +137,7 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
     
     try:
         print "-- Querying JPL Horizon's ephemeris"
-        mag_list_jpl, r_err = get_mag_rad(familyname, objectname)
+        mag_list_jpl, r_sig = get_mag_rad(familyname, objectname)
         pRA, pDEC, ra_dot, dec_dot = get_coords(familyname, objectname, expnum_p, start, end)
     except Exception, e:
         print 'ERROR: Error while doing JPL query, {}'.format(e)
@@ -148,41 +149,47 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
     r_new, r_old, enough = check_num_stars(num_cat_objs, size, objectname, expnum_p, username, password, familyname)
     if enough == False:
         return
+        
+    print '-- Identifying object from nearest neighbours'
+    i_list, found = find_neighbours(transients, pvwcs, r_sig, pRA, pDEC, expnum_p)
+    if found == False:
+        success = True
+        return success
     
-    err = 30.0
-    r_pix = exptime * ( (ra_dot)**2 + (dec_dot)**2 )**0.5 / (3600 * 0.184)
-    r_pix_err = exptime * (err/100) * ( abs(ra_dot) + abs(dec_dot) ) / (3600 * 0.184)
-    assert r_pix_err != 0
-    print '  Error allowance is set to {} percent'.format(err)
-    
-    try:
-        i_list = find_neighbours(transients, pvwcs, r_err, pRA, pDEC)
-        if len(i_list) == 0:
-            print '-- Expanding radius of nearest neighbour search by 1.5x'
-            i_list = find_neighbours(transients, pvwcs, 2*r_err, pRA, pDEC)
-            if len(i_list) == 0:
-                print 'WARNING: No nearest neighbours were found within {} ++++++++++++++++++++++'.format(r_err*1.5)
-                ascii.write(transients, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum_p))
-                success = True
-                return success
-                
-        good_neighbours, mean = iden_good_neighbours(expnum_p, i_list, transients, zeropt, mag_list_jpl, r_pix, r_pix_err, pvwcs)
+    '''try:
+        
+        good_neighbours, mean = iden_good_neighbours(expnum_p, i_list, transients, zeropt, mag_list_jpl, ra_dot, dec_dot, exptime, pvwcs)
         print good_neighbours
 
         print_output(familyname, objectname, expnum_p, good_neighbours, ap, th)
         
         if len(good_neighbours) == 1:
-            print '-- Cutting out recentered postage stamp'
-            #cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, r_old, username, password)
+            involved = check_involvement(good_neighbours, table)
+            if involved == False:
+                print '-- Cutting out recentered postage stamp'
+                #cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, r_old, username, password)
         
         success = True
         
     except Exception, e:
         print 'ERROR: {}'.format(e)
         #get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)   
+    '''
+    good_neighbours, r_err = iden_good_neighbours(expnum_p, i_list, transients, zeropt, mag_list_jpl, ra_dot, dec_dot, exptime, pvwcs)
+    print good_neighbours
+
+    print_output(familyname, objectname, expnum_p, good_neighbours, ap, th)
+    
+    if len(good_neighbours) == 1:
+        involved = check_involvement(good_neighbours, table, r_err)
+        if involved == False:
+            print '-- Cutting out recentered postage stamp'
+            #cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, r_old, username, password)
+    
+    success = True
                 
     return success
-    
+            
 def get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, filtertype, imagetype):    
     
     stamp_found = False      
@@ -205,8 +212,10 @@ def get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, 
                             header = fits.getheader(file_path, 1)
                             header2 = fits.getheader(file_path, 2)
                             size = header['NAXIS1']+header2['NAXIS1']
+                            print 'good until here'
                         
                             table1 = sep_phot(data1, ap, th)
+                            print 'this time it worked'
                             table2 = sep_phot(data2, ap, th)
                             table = vstack([table1, table2])
                             #ascii.write(table, os.path.join(stamps_dir, '{}_phot.txt'.format(expnum_p)))
@@ -258,18 +267,18 @@ def get_mag_rad(familyname, objectname):
     ephemerides = query_jpl(objectname, time_start, time_end, params=[9, 36], step=1)
     
     mag_list =  np.array(ephemerides.icol(2))
-    ra_avg = np.mean(np.mean(ephemerides.icol(3)))
-    dec_avg = np.mean(np.mean(ephemerides.icol(4)))
+    ra_sig = np.mean(np.mean(ephemerides.icol(3)))
+    dec_sig = np.mean(np.mean(ephemerides.icol(4)))
         
-    if ra_avg > dec_avg:
-        r_err = ra_avg / 0.184
+    if ra_sig > dec_sig:
+        r_sig = ra_sig / 0.184
     else:
-        r_err = dec_avg / 0.184
+        r_sig = dec_sig / 0.184
 
-    if r_err < 10: # 0.003 deg * 3600 "/deg / 0.187 "/pix
-        r_err = 10
+    if r_sig < 10: # 0.003 deg * 3600 "/deg / 0.187 "/pix
+        r_sig = 10
     
-    return mag_list, r_err
+    return mag_list, r_sig
 
 def get_coords(familyname, objectname, expnum, time_start, time_end):
     '''
@@ -411,7 +420,7 @@ def sep_phot(data, ap, th):
     flag[use_circle] = cflag
    
     # write to ascii table
-    table = Table([objs['x'], objs['y'], flux, objs['a'], objs['b']], names=('x', 'y', 'flux', 'a', 'b'))
+    table = Table([objs['x'], objs['y'], flux, objs['a'], objs['b'], objs['theta']], names=('x', 'y', 'flux', 'a', 'b', 'theta'))
     return table
     
 def append_table(table, pvwcs, zeropt):
@@ -449,8 +458,8 @@ def compare_to_catalogue(table, pvwcs):
     #match1, match2 = match_lists(pos1, pos2, tolerance=0.005111111)
     #print match1, match2
      
-    sep_tol = 30 * 0.184 / 3600 # pixels to degrees
-    mag_tol = 0.5
+    sep_tol = 5 * 0.184 / 3600 # pixels to degrees
+    mag_tol = 0.2
     
     cat_objs = 0
     trans_ra = []
@@ -460,6 +469,7 @@ def compare_to_catalogue(table, pvwcs):
     trans_mag = []
     trans_a = []
     trans_b = []
+    trans_theta = []
     for row in range(len(septable)):
         #index = catalogue[( abs(catalogue.ra - septable['ra'][row]) < 0.0051111 )]
         index = catalogue.query('({} < ra < {}) & ({} < dec < {}) & ({} < mag < {})'.format(septable['ra'][row]-sep_tol, septable['ra'][row]+sep_tol, 
@@ -472,6 +482,7 @@ def compare_to_catalogue(table, pvwcs):
             trans_y.append(septable['y'][row])
             trans_a.append(septable['a'][row])
             trans_b.append(septable['b'][row])
+            trans_theta.append(septable['theta'][row])
             trans_mag.append(septable['mag'][row])
         else:
             cat_objs += len(index)
@@ -479,34 +490,55 @@ def compare_to_catalogue(table, pvwcs):
     if len(trans_x) == 0:
         print "WARNING: No transients identified"
             
-    transients = Table([trans_x, trans_y, trans_a, trans_b, trans_ra ,trans_dec, trans_mag], names=['x', 'y', 'a', 'b', 'ra', 'dec', 'mag'])
+    transients = Table([trans_x, trans_y, trans_a, trans_b, trans_ra ,trans_dec, trans_mag, trans_theta], names=['x', 'y', 'a', 'b', 'ra', 'dec', 'mag', 'theta'])
     return transients, cat_objs
 
-def find_neighbours(septable, pvwcs, r_err, pRA, pDEC):
+def find_neighbours(transients, pvwcs, r_err, pRA, pDEC, expnum_p):
+    
+    pX, pY = pvwcs.sky2xy(pRA, pDEC)
+    print "  Predicted RA, DEC : {}  {}".format(pRA, pDEC)
+    print "  Predicted x, y : {}  {}".format(pX, pY)
+    
+    found = True
+    
+    i_list = neighbour_search(transients, pvwcs, r_err, pRA, pDEC)
+    if len(i_list) == 0:
+        print '-- Expanding radius of nearest neighbour search by 1.5x'
+        i_list = neighbour_search(transients, pvwcs, 2*r_err, pRA, pDEC)
+        if len(i_list) == 0:
+            print 'WARNING: No nearest neighbours were found within {} ++++++++++++++++++++++'.format(r_err*1.5)
+            ascii.write(transients, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum_p))
+            found = False
+                
+    return i_list, found
+    
+def neighbour_search(septable, pvwcs, r_err, pRA, pDEC):    
     '''
     Computes the nearest neighbours to predicted coordinates within an RA/DEC uncertainty circle
     '''
     tree = cKDTree(zip((np.array(septable['x'])).ravel(), (np.array(septable['y'])).ravel()))    
     
-    print "  Predicted RA, DEC : {}  {}".format(pRA, pDEC)
     pX, pY = pvwcs.sky2xy(pRA, pDEC) # convert from WCS to pixels
-    print "  Predicted x, y : {}  {}".format(pX, pY)
     
     # parse through table and get RA and DEC closest to predicted coordinates (in pixels)
     coords = np.array([pX, pY])
     i_list = tree.query_ball_point(coords, r_err)
     
-    print i_list
-
     return i_list
     
-def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, r_pix_err, pvwcs):
+def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot, dec_dot, exptime, pvwcs):
     '''
     Selects nearest neighbour object from predicted coordinates as object of interest
     In order:
         Compares measured apparent magnitude to predicted, passes if in range of values
         Calculates eccentricity, passes if greater than minimum value that is inputted
     '''
+    
+    err = 30.0
+    r_pix = exptime * ( (ra_dot)**2 + (dec_dot)**2 )**0.5 / (3600 * 0.184)
+    r_pix_err = exptime * (err/100) * ( abs(ra_dot) + abs(dec_dot) ) / (3600 * 0.184)
+    assert r_pix_err != 0
+    print '  Error allowance is set to {} percent'.format(err)    
         
     mRA_pix = None
     mag_sep_list = []
@@ -515,6 +547,9 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, 
     mDEC_pix_list = []
     ra_list = []
     dec_list = []
+    theta_list = []
+    a_list = []
+    b_list = []
     
     mean = np.mean(mag_list_jpl)
     maxmag = np.amax(mag_list_jpl)
@@ -530,9 +565,9 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, 
     something_good = False
     for i in i_list:
         # table format: x, y, a, b, ra, dec, mag
-        mag_sep = septable[i][6]
-        a = septable[i][2]
-        b = septable[i][3]
+        mag_sep = septable['mag'][i]
+        a = septable['a'][i]
+        b = septable['b'][i]
         
         r = 2 * ( a**2 - b**2 )**0.5
 
@@ -540,50 +575,59 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, 
             something_good = True
             # apply both eccentricity and magnitude conditions
             if (abs(mag_sep - mean) < magrange) & (abs(r-r_pix) < r_pix_err):
-                mRA_pix = septable[i][0]
-                mDEC_pix = septable[i][1]
+                mRA_pix = septable['x'][i]
+                mDEC_pix = septable['y'][i]
                 
                 index_list.append(i)
                 mRA_pix_list.append(mRA_pix)
                 mDEC_pix_list.append(mDEC_pix)
                 mag_sep_list.append(mag_sep) 
-                ra_list.append(septable[i][4])             
-                dec_list.append(septable[i][5])
+                ra_list.append(septable['ra'][i])             
+                dec_list.append(septable['dec'][i])
+                theta_list.append(septable['theta'][i])
+                a_list.append(septable['a'][i])
+                b_list.append(septable['b'][i])
 
                 print '  Measured values for index {}: {}, {} {}'.format(i, r, a, b)
             
             elif (abs(r-r_pix) < r_pix_err):
-                mRA_pix = septable[i][0]
-                mDEC_pix = septable[i][1]
-
+                mRA_pix = septable['x'][i]
+                mDEC_pix = septable['y'][i]
+                
                 index_list.append(i)
                 mRA_pix_list.append(mRA_pix)
                 mDEC_pix_list.append(mDEC_pix)
-                mag_sep_list.append(mag_sep)
-                ra_list.append(septable[i][4])             
-                dec_list.append(septable[i][5])
+                mag_sep_list.append(mag_sep) 
+                ra_list.append(septable['ra'][i])             
+                dec_list.append(septable['dec'][i])
+                theta_list.append(septable['theta'][i])
+                a_list.append(septable['a'][i])
+                b_list.append(septable['b'][i])
                 
                 print '  Measured values for index {}: {}, {} {}'.format(i, r, a, b)
                                 
                 print "WARNING: Magnitude is outside range for index {}: calculated, {} +/- {}, measured, {}".format(i, mean, magrange, mag_sep)
                 
             elif (abs(mag_sep - mean) < magrange):
-                mRA_pix = septable[i][0]
-                mDEC_pix = septable[i][1]
-
+                mRA_pix = septable['x'][i]
+                mDEC_pix = septable['y'][i]
+                
                 index_list.append(i)
                 mRA_pix_list.append(mRA_pix)
                 mDEC_pix_list.append(mDEC_pix)
-                mag_sep_list.append(mag_sep)
-                ra_list.append(septable[i][4])             
-                dec_list.append(septable[i][5])
+                mag_sep_list.append(mag_sep) 
+                ra_list.append(septable['ra'][i])             
+                dec_list.append(septable['dec'][i])
+                theta_list.append(septable['theta'][i])
+                a_list.append(septable['a'][i])
+                b_list.append(septable['b'][i])
                 
                 print '  Measured magnitude and predicted: {} {}'.format(mag_sep, mean)
                 print "WARNING: Ellipticity is outside range for index {}: calculated, {} +/- {}, measured, {}".format(i, r_pix, r_pix_err, r)
                   
                     
-    good_neighbours = Table([index_list, mRA_pix_list, mDEC_pix_list, ra_list, dec_list, mag_sep_list], 
-                names=('index', 'x', 'y', 'ra', 'dec', 'mag'))
+    good_neighbours = Table([index_list, mRA_pix_list, mDEC_pix_list, ra_list, dec_list, mag_sep_list, a_list, b_list, theta_list], 
+                names=('index', 'x', 'y', 'ra', 'dec', 'mag', 'a', 'b', 'theta'))
                     
     if something_good == False:
         print "WARNING: Flux of nearest neighbours measured to be 0.0"
@@ -597,7 +641,48 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, r_pix, 
         return
         
     else: 
-        return good_neighbours, mean 
+        return good_neighbours, r_pix_err 
+        
+def check_involvement(objectdata, septable, r_err):
+    
+    tree = cKDTree(zip((np.array(septable['x'])).ravel(), (np.array(septable['y'])).ravel()))
+    search_r = 50
+    i_list = tree.query_ball_point([objectdata['x'][0], objectdata['y'][0]], search_r)
+    
+    print '>> Selects first object in good_neighbours to make polygon from'
+    a = objectdata['a'][0]+r_err
+    b = objectdata['b'][0]+r_err
+    th = objectdata['theta'][0]
+    x = objectdata['x'][0]
+    y = objectdata['y'][0]
+    a_x = a*math.cos(th)
+    a_y = a*math.sin(th)
+    b_x = b*math.sin(th)
+    b_y = b*math.cos(th)
+    
+    p1 = (x+b_x-a_x, y-a_y+b_y)
+    p2 = (x+a_x+b_x, y+a_y+b_y)
+    p3 = (x+a_x-b_x, y+a_y-b_y)
+    p4 = (x-a_x-b_x, y-a_y-b_y)
+    
+    print p1, p2, p3, p4
+    
+    polygon = Polygon([p1, p2, p3, p4])
+    
+    if len(i_list) > 1:
+        print '  Objects within {} pixels of identified asteroid (inc. ast.): {}'.format(search_r, i_list)
+        for i in i_list:
+            x1 = septable['x'][i]
+            y1 = septable['y'][i]
+        
+            point = Point(x1, y1)
+            if polygon.contains(point) == True and x1 != x:
+                print '>>> Object is involved with point at x, y: {} {}'.format(x1, y1)
+            else:
+                print '  Object is not involved.'
+    
+    else:
+        print 'No other objects within {} pixels of identified asteroid'.format(search_r)
         
 def check_num_stars(num_objs, size, objectname, expnum_p, username, password, familyname):
         
