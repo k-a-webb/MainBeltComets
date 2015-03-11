@@ -81,9 +81,9 @@ def main():
     
 def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=3.5, filtertype='r', imagetype='p'):
 
-    out_filename = '{}_r{}_t{}_output.txt'.format(familyname, ap, th)
+    out_filename = '{}_r{}_t{}_output.txt'.format(familyname, aperture, thresh)
     with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'w') as outfile:
-        outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('Object', "Image", 'RA', 'DEC', 'mag', 'x', 'y'))
+        outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('Object', "Image", 'RA', 'DEC', 'flux', 'mag', 'x', 'y'))
     
     # initiate directories
     init_dirs(familyname, objectname)
@@ -314,7 +314,7 @@ def get_mag_rad(familyname, objectname):
     ra_sig = np.mean(np.mean(ephemerides.icol(3)))
     dec_sig = np.mean(np.mean(ephemerides.icol(4)))
     
-    print '>> RA and DEC 3sigma error: {:2f} {:2f}'.format(ra_sig / 0.184, dec_sig / 0.184)
+    print '>> RA and DEC 3sigma error: {:.2f} {:.2f}'.format(ra_sig / 0.184, dec_sig / 0.184)
         
     if ra_sig > dec_sig:
         r_sig = ra_sig / 0.184
@@ -339,13 +339,13 @@ def get_coords(familyname, objectname, expnum, time_start, time_end):
     mid = int(len(ephemerides)/2)
     ra = ephemerides['R.A._(ICRF/J2000.0)'][mid]
     dec = ephemerides[' DEC_(ICRF/J2000.0)'][mid]
-    ra_dot = ephemerides[' dRA*cosD'][mid]
+    ra_dot_cos_dec = ephemerides[' dRA*cosD'][mid]
     dec_dot = ephemerides['d(DEC)/dt'][mid]
     
     if dec.split()[0] < 0:
         sign = -1
     else:
-        sign = 1   
+        sign = 1      
         
     ra_h = ra.split()[0]
     ra_m = ra.split()[1]
@@ -358,6 +358,8 @@ def get_coords(familyname, objectname, expnum, time_start, time_end):
     c = SkyCoord('{}h{}m{}s'.format(ra_h, ra_m, ra_s), '{}d{}m{}s'.format(dec_d, dec_m, dec_s), frame='icrs')
     ra_deg = c.ra.degree 
     dec_deg = c.dec.degree 
+    
+    ra_dot = ra_dot_cos_dec / math.cos(math.radians(dec_deg))
                         
     return ra_deg, dec_deg, ra_dot, dec_dot
 
@@ -478,9 +480,11 @@ def compare_to_catalogue(table, pvwcs):
     trans_x = []
     trans_y = []
     trans_mag = []
+    trans_flux = []
     trans_a = []
     trans_b = []
     trans_theta = []
+	
     for row in range(len(septable)):
         #index = catalogue[( abs(catalogue.ra - septable['ra'][row]) < 0.0051111 )]
         index = catalogue.query('({} < ra < {}) & ({} < dec < {}) & ({} < mag < {})'.format(septable['ra'][row]-sep_tol, septable['ra'][row]+sep_tol, 
@@ -495,20 +499,21 @@ def compare_to_catalogue(table, pvwcs):
             trans_b.append(septable['b'][row])
             trans_theta.append(septable['theta'][row])
             trans_mag.append(septable['mag'][row])
+            trans_flux.append(septable['flux'][row])
         else:
             cat_objs += len(index)
     
     if len(trans_x) == 0:
         print "WARNING: No transients identified"
             
-    transients = Table([trans_x, trans_y, trans_a, trans_b, trans_ra ,trans_dec, trans_mag, trans_theta], names=['x', 'y', 'a', 'b', 'ra', 'dec', 'mag', 'theta'])
+    transients = Table([trans_x, trans_y, trans_a, trans_b, trans_ra ,trans_dec, trans_mag, trans_flux, trans_theta], names=['x', 'y', 'a', 'b', 'ra', 'dec', 'mag', 'flux', 'theta'])
     return transients, cat_objs
 
 def find_neighbours(transients, pvwcs, r_sig, pRA, pDEC, expnum_p):
     
     pX, pY = pvwcs.sky2xy(pRA, pDEC)
-    print "  Predicted RA, DEC : {:2f}  {:2f}".format(pRA, pDEC)
-    print "  Predicted x, y : {:1f}  {:1f}".format(pX, pY)
+    print "  Predicted RA, DEC : {:.2f}  {:.2f}".format(pRA, pDEC)
+    print "  Predicted x, y : {:.2f}  {:.2f}".format(pX, pY)
     
     found = True
     
@@ -565,6 +570,7 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
     theta_list = []
     a_list = []
     b_list = []
+    flux_list = []
     
     mean = np.mean(mag_list_jpl)
     maxmag = np.amax(mag_list_jpl)
@@ -575,7 +581,7 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
     else:
         magrange = maxmag - minmag
     
-    print '  Theoretical focal length: {:2f} +/- {:2f}'.format(f_pix, f_pix_err)
+    print '  Theoretical focal length: {:.2f} +/- {:.2f}'.format(f_pix, f_pix_err)
     
     something_good = False
     for i in i_list:
@@ -598,13 +604,14 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
                 mRA_pix_list.append(mRA_pix)
                 mDEC_pix_list.append(mDEC_pix)
                 mag_sep_list.append(mag_sep) 
+                flux_list.append(septable['flux'][i])
                 ra_list.append(septable['ra'][i])             
                 dec_list.append(septable['dec'][i])
                 theta_list.append(septable['theta'][i])
                 a_list.append(septable['a'][i])
                 b_list.append(septable['b'][i])
 
-                print '  Measured values (r, a, b) for index {}: {:2f}, {:2f} {:2f}'.format(i, f, a, b)
+                print '  Measured values (r, a, b) for index {}: {:.2f}, {:.2f} {:.2f}'.format(i, f, a, b)
             
             elif (abs(f-f_pix) < f_pix_err):
                 mRA_pix = septable['x'][i]
@@ -614,15 +621,16 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
                 mRA_pix_list.append(mRA_pix)
                 mDEC_pix_list.append(mDEC_pix)
                 mag_sep_list.append(mag_sep) 
+                flux_list.append(septable['flux'][i])
                 ra_list.append(septable['ra'][i])             
                 dec_list.append(septable['dec'][i])
                 theta_list.append(septable['theta'][i])
                 a_list.append(septable['a'][i])
                 b_list.append(septable['b'][i])
                 
-                print '  Measured values (r, a, b) for index {}: {:2f}, {:2f} {:2f}'.format(i, f, a, b)
+                print '  Measured values (r, a, b) for index {}: {:.2f}, {:.2f} {:.2f}'.format(i, f, a, b)
                                 
-                print "WARNING: Magnitude is outside range for index {}: calculated, {:2f} +/- {:2f}, measured, {:2f}".format(i, mean, magrange, mag_sep)
+                print "WARNING: Magnitude is outside range for index {}: calculated, {:.2f} +/- {:.2f}, measured, {:.2f}".format(i, mean, magrange, mag_sep)
                 
             elif (abs(mag_sep - mean) < magrange):
                 mRA_pix = septable['x'][i]
@@ -632,6 +640,7 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
                 mRA_pix_list.append(mRA_pix)
                 mDEC_pix_list.append(mDEC_pix)
                 mag_sep_list.append(mag_sep) 
+                flux_list.append(septable['flux'][i])
                 ra_list.append(septable['ra'][i])             
                 dec_list.append(septable['dec'][i])
                 theta_list.append(septable['theta'][i])
@@ -639,11 +648,11 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
                 b_list.append(septable['b'][i])
                 
                 print '  Measured magnitude and predicted: {} {}'.format(mag_sep, mean)
-                print "WARNING: Ellipticity is outside range for index {}: calculated, {:2f} +/- {:2f}, measured, {:2f}".format(i, f_pix, f_pix_err, f)
+                print "WARNING: Ellipticity is outside range for index {}: calculated, {:.2f} +/- {:.2f}, measured, {:.2f}".format(i, f_pix, f_pix_err, f)
                   
                     
-    good_neighbours = Table([index_list, mRA_pix_list, mDEC_pix_list, ra_list, dec_list, mag_sep_list, a_list, b_list, theta_list], 
-                names=('index', 'x', 'y', 'ra', 'dec', 'mag', 'a', 'b', 'theta'))
+    good_neighbours = Table([mRA_pix_list, mDEC_pix_list, ra_list, dec_list, mag_sep_list, flux_list, a_list, b_list, theta_list], 
+                names=('x', 'y', 'ra', 'dec', 'mag', 'flux', 'a', 'b', 'theta'))
                     
     if something_good == False:
         print "WARNING: Flux of nearest neighbours measured to be 0.0"
@@ -652,7 +661,7 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
     if mRA_pix == None:
         print "WARNING: No condition could not be satisfied <<<<<<<<<<<<<<<<<<<<<<<<<<<<"
         print '  Nearest neighbour list: {}'.format(i_list)
-        print "  Mag mean, accepted error, and fitting mags: {:2f} {:2f}".format(mean, magrange)
+        print "  Mag mean, accepted error, and fitting mags: {:.2f} {:.2f}".format(mean, magrange)
         ascii.write(septable, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum))
         return
         
@@ -743,12 +752,12 @@ def check_num_stars(num_objs, size, objectname, expnum_p, username, password, fa
         r_new = r_old + 0.03
         enough = False
         print '  Not enough stars in the stamp <<<<<<<<<<<<<<<<<<<'              
-        get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
+        #get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
     if 10 < num_objs < 30: 
         r_new = r_old + 0.01
         enough = False
         print '  Not enough stars in the stamp <<<<<<<<<<<<<<<<<<<'                    
-        get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
+        #get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
     
     return r_new, r_old, enough 
     
@@ -762,10 +771,14 @@ def print_output(familyname, objectname, expnum_p, object_data, ap, th):
         with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'a') as outfile:
             try:
                 for i in range(0, len(object_data)):
-                    #'Object', "Image", 'RA', 'DEC', 'mag', 'x', 'y'
-                    outfile.write('{} {} {} {} {} {} {}\n'.format(
-                          objectname, expnum_p, object_data[i][2], object_data[i][3], object_data[i][4], object_data[i][0], 
-                          object_data[i][1]))
+                    #'Object', "Image", 'RA', 'DEC', 'flux', 'mag', 'x', 'y'
+					# good_neighbours = 'x', 'y', 'ra', 'dec', 'mag', 'flux', 'a', 'b', 'theta'
+                    #outfile.write('{} {} {} {} {} {} {}\n'.format(
+                          #objectname, expnum_p, object_data[i][2], object_data[i][3], object_data[i][4], object_data[i][4], object_data[i][0], 
+                          #object_data[i][1]))
+					outfile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
+					    objectname, expnum_p, object_data['ra'][i], object_data['dec'][i], object_data['flux'][i], 
+						object_data['mag'][i], object_data['x'][i], object_data['y'][i]))
             except:
                 print "ERROR: cannot write to outfile <<<<<<<<<<<<<<<<<<<<<<<<<<"
     
