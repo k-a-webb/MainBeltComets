@@ -1,5 +1,7 @@
 import argparse
+from cStringIO import StringIO
 import getpass
+from astropy.io import fits
 import requests
 import os
 import vos
@@ -16,7 +18,7 @@ from ossos_scripts import coding
 from ossos_scripts import mpc
 from ossos_scripts import util
 
-
+_TARGET = "TARGET"
 
 BASEURL = "http://www.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/vospace/auth/synctrans"
 
@@ -145,71 +147,81 @@ def centered_stamp(objectname, expnum,radius, RA, DEC, username, password, famil
         print type(objectname, expnum, RA, DEC, radius, username, password, familyname)
         cutout(objectname, expnum, RA, DEC, radius, username, password, familyname)
     return
-    
-def cutout(objectname, image, RA, DEC, radius, username, password, familyname):
-    
-    ''' 
+
+
+def cutout(object_name, image, ra, dec, radius, username, password, family_name, test=False):
+    """
     Test for image known to work   
     image = '1667879p'
     RA = 21.1236333333
     DEC = 11.8697277778
-    '''
+    """
     
-    vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
-    output_dir = 'asteroid_families/{}/{}_stamps'.format(familyname, familyname)
-    if os.path.isdir(output_dir) == False:
+    vos_dir = 'vos:kawebb/postage_stamps/{}'.format(family_name)
+    output_dir = 'asteroid_families/{}/{}_stamps'.format(family_name, family_name)
+    if not os.path.isdir(output_dir):
         os.makedirs(output_dir)
-        
-    this_cutout = "CIRCLE ICRS {} {} {}".format(RA, DEC, radius)                                 
-    print "cut out: {} {} {} {} {}".format(objectname, image, RA, DEC, radius)
 
-    expnum = image.split('p')[0] # only want calibrated images    
-    target = storage.vospace.fixURI(storage.get_uri(expnum)) 
+    this_cutout = "CIRCLE ICRS {} {} {}".format(ra, dec, 2*0.18/3600.0)
+    print "cut out: {}".format(this_cutout)
+
+    expnum = image.split('p')[0]  # only want calibrated images
+    target = storage.vospace.fixURI(storage.get_uri(expnum))
+    direction = "pullFromVoSpace"
+    protocol = "ivo://ivoa.net/vospace/core#httpget"
+    view = "cutout"
+    params = {_TARGET: target,
+              "PROTOCOL": protocol,
+              "DIRECTION": direction,
+              "cutout": this_cutout,
+              "view": view}
+    r = requests.get(BASEURL, params=params, auth=(username, password))
+
+    try:
+        r.raise_for_status()
+        small_fobj = fits.open(StringIO(r.content))
+        extname = small_fobj[0].header.get('EXTNAME', None)
+        del small_fobj
+    except requests.HTTPError, e:
+        print 'Connection Failed, {}'.format(e)
+        return
+
+    this_cutout = "CIRCLE ICRS {} {} {}".format(ra, dec, radius)
+    print "cut out: {}".format(this_cutout)
+
+    expnum = image.split('p')[0]  # only want calibrated images
+    target = storage.vospace.fixURI(storage.get_uri(expnum))
     direction = "pullFromVoSpace"
     protocol = "ivo://ivoa.net/vospace/core#httpget"
     view = "cutout"
     params = {"TARGET": target,
-                  "PROTOCOL": protocol,
-                  "DIRECTION": direction,
-                  "cutout": this_cutout,
-                  "view": view}
-    #import logging
-    #logging.getLogger().setLevel(logging.DEBUG)
-    r = requests.get(BASEURL, params=params, auth=(username, password), stream=True)#, allow_redirects=False)
-    #print r.content
-    #print r.headers
-    #print out results w/o redirection
-    
-    #logging.getLogger().setLevel(logging.ERROR)
-    
-    if type(RA) != float:
-        RA = float(RA)
-        DEC = float(DEC)
-    
-    try:
-          r.raise_for_status()  # confirm the connection worked as hoped
-    
-          postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, image, RA, DEC)
+              "PROTOCOL": protocol,
+              "DIRECTION": direction,
+              "cutout": this_cutout,
+              "view": view}
 
-          with open('{}/{}'.format(output_dir, postage_stamp_filename), 'w') as tmp_file:
-              object_dir = 'asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, postage_stamp_filename)
-              assert os.path.exists(object_dir)
-              for chunk in r.iter_content(50):
-                  tmp_file.write(chunk)
-              #tmp_file.write(r.content)
-              #tmp_file.write(r.raw.read())
-              storage.copy(object_dir, '{}/{}'.format(vos_dir, postage_stamp_filename))
-          #os.unlink(object_dir)  # easier not to have them hanging around    
-    
-    except requests.HTTPError, e: 
+    r = requests.get(BASEURL, params=params, auth=(username, password))
+
+    try:
+        r.raise_for_status()
+        full_fobj = fits.open(StringIO(r.content))
+        if extname is not None:
+            cutout_fobj = full_fobj[extname]
+        else:
+            cutout_fobj = full_fobj[0]
+    except requests.HTTPError, e:
         print 'Connection Failed, {}'.format(e)
         return
-    
-    '''
-    connection = http.client.HTTPConnection(BASEURL, params=params, auth=(username, password))
-    
-    '''
-    
+
+    cutout_fobj = fits.PrimaryHDU(data=cutout_fobj.data, header=cutout_fobj.header)
+
+    postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(object_name, image, float(ra), float(dec))
+    cutout_fobj.writeto("{}/{}".format(output_dir, postage_stamp_filename))
+    del cutout_fobj
+    if test:
+        return
+    storage.copy('{}/{}'.format(output_dir, postage_stamp_filename),
+                 '{}/{}'.format(vos_dir, postage_stamp_filename))
     
 
 def query_jpl(familyname, objectname, step=1, su='d'):
