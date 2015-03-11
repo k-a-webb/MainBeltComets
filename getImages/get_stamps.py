@@ -70,7 +70,7 @@ def get_stamps(familyname, username, password, radius=0.01, suffix=None):
 
     image_list = '{}/{}_images.txt'.format(family_dir, familyname)
     with open(image_list) as infile: 
-        for line in infile.readlines()[9360:]: # skip header info
+        for line in infile.readlines()[1:]: # skip header info
             assert len(line.split()) > 0
             objectname = line.split()[0]
             expnum = line.split()[1]
@@ -80,7 +80,7 @@ def get_stamps(familyname, username, password, radius=0.01, suffix=None):
             vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
             if not storage.exists(vos_dir, force=True):
                 storage.mkdir(vos_dir)
-            #assert storage.exists(vos_dir, force=True)
+            assert storage.exists(vos_dir, force=True)
 
             postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, expnum, RA, DEC)
             if storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)) == True:
@@ -175,7 +175,11 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname):
                   "view": view}
     #import logging
     #logging.getLogger().setLevel(logging.DEBUG)
-    r = requests.get(BASEURL, params=params, auth=(username, password), stream=True)
+    r = requests.get(BASEURL, params=params, auth=(username, password), stream=True)#, allow_redirects=False)
+    #print r.content
+    #print r.headers
+    #print out results w/o redirection
+    
     #logging.getLogger().setLevel(logging.ERROR)
     
     if type(RA) != float:
@@ -200,6 +204,12 @@ def cutout(objectname, image, RA, DEC, radius, username, password, familyname):
     except requests.HTTPError, e: 
         print 'Connection Failed, {}'.format(e)
         return
+    
+    '''
+    connection = http.client.HTTPConnection(BASEURL, params=params, auth=(username, password))
+    
+    '''
+    
     
 
 def query_jpl(familyname, objectname, step=1, su='d'):
