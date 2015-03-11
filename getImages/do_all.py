@@ -38,7 +38,7 @@ def main():
                     help="restrict type of image (unprocessed, reduced, calibrated)")
     parser.add_argument("--radius", '-r',
                     action='store',
-                    default=0.01,
+                    default=0.02,
                     help='Radius (degree) of circle of cutout postage stamp.')
     parser.add_argument("--aperture", '-ap',
                     action='store',
@@ -57,41 +57,48 @@ def main():
 
     do_all_things(args.family, args.object, args.filter, args.type, args.radius, args.aperture, args.thresh)
 
-def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', radius=0.01, aperture=10.0, thresh=5.0):
+def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', radius=0.02, aperture=10.0, thresh=5.0):
    
     username = raw_input("CADC username: ")
     password = getpass.getpass("CADC password: ")
     
     family_list_path = 'asteroid_families/{}/{}_family.txt'.format(familyname, familyname)
+    vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
+    assert storage.exists(vos_dir)
+    image_list_path = 'asteroid_families/{}/{}_images_test.txt'.format(familyname, familyname) # USING TEST FILE
+    print "WARNING: USING A TEST FILE ***************************************************************" 
     
     if  os.path.exists(family_list_path):
-        print "----- List of objects in family {} exists already -----".format(familyname)
         with open(family_list_path) as infile:
             filestr = infile.read()
             all_object_list = filestr.split('\n')
     else:    
         all_object_list = find_family_members(familyname)
     
-    
     out_filename = '{}_r{}_t{}_output.txt'.format(familyname, aperture, thresh)
     with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'w') as outfile:
-        outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('Object', "Image", 'flux', 'mag', 'RA', 'DEC', 'ecc', 'index'))
-    
-
-    image_list_path = 'asteroid_families/{}/{}_images_test.txt'.format(familyname, familyname) # USING TEST FILE
-    print "WARNING: USING A TEST FILE ***************************************************************" 
-    if  os.path.exists(image_list_path):
+        outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('Object', "Image", 'RA', 'DEC', 'flux', 'mag', 'x', 'y'))
+        
+    if  os.path.exists(image_list_path):  
         table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['Object', 'Image', 'RA', 'DEC'], sep=' ', dtype={'Object':object})
-        for row in range(0,4):#len(table)):
+        for row in range(3,10):#len(table)):
             print '\n----- Searching for {} {} -----'.format(table['Object'][row], table['Image'][row])
-            vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
+            
             postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(table['Object'][row], table['Image'][row], table['RA'][row], table['DEC'][row])
-            if storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)) == True:
-                print "-- Stamp already exists"
-            else:
+            if storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)) == False:
                 cutout(table['Object'][row], table['Image'][row], table['RA'][row], table['DEC'][row], radius, username, password, familyname)
+            
+            assert storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)) == True
+            success = False
+            attempts = 0
+            while success != True and attempts < 3:
+                success = iterate_thru_images(familyname, str(table['Object'][row]), table['Image'][row], username, password, aperture, thresh, filtertype, imagetype)
+                attempts += 1
+                if attempts == 3:
+                    print ' >>>> Last attempt'
+                print '\n'
+            #success = iterate_thru_images(familyname, str(table['Object'][row]), table['Image'][row], username, password, aperture, thresh, filtertype, imagetype)
                 
-            object_data = iterate_thru_images(familyname, str(table['Object'][row]), table['Image'][row], username, password, aperture, thresh, filtertype, imagetype)
     else:  
         go_the_long_way(familyname, filtertype, imagetype)
 
