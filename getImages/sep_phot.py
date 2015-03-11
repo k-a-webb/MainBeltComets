@@ -15,11 +15,11 @@ import math
 import pandas as pd
 import sys
 from shapely.geometry import Polygon, Point
+from astropy.coordinates import SkyCoord
 
 from ossos_scripts import storage
 import ossos_scripts.wcs as wcs
 from ossos_scripts.storage import get_astheader, exists
-#from ossos_scripts.util import match_lists
 
 from get_images import get_image_info
 from find_family import find_family_members
@@ -83,7 +83,7 @@ def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=3.5, filtertyp
 
     out_filename = '{}_r{}_t{}_output.txt'.format(familyname, ap, th)
     with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'w') as outfile:
-        outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('Object', "Image", 'flux', 'mag', 'RA', 'DEC', 'ecc', 'index'))
+        outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('Object', "Image", 'RA', 'DEC', 'mag', 'x', 'y'))
     
     # initiate directories
     init_dirs(familyname, objectname)
@@ -150,7 +150,7 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
     if enough == False:
         return
         
-    print '-- Identifying object from nearest neighbours'
+    print '-- Identifying object from nearest neighbours wihing {} pixels'.format(r_sig)
     i_list, found = find_neighbours(transients, pvwcs, r_sig, pRA, pDEC, expnum_p)
     if found == False:
         success = True
@@ -240,6 +240,50 @@ def get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, 
                 end = '{} {}'.format(header['DATEEND'], header['UTCEND'])
                
                 return table, exptime, zeropt, size, pvwcs, stamp_found, start, end
+             
+def sep_phot(data, ap, th):
+    ''' 
+    Preforms photometry by SEP, similar to source extractor 
+    '''
+
+    # Measure a spatially variable background of some image data (np array)
+    try:    
+        bkg = sep.Background(data) #, mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
+    except:
+        data = data.byteswap(True).newbyteorder()
+        bkg = sep.Background(data) #, mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
+        
+    # Evaluate the spatially variable background and RMS:
+    back = bkg.back() # creates an array, same shape and type as data
+    rms = bkg.rms()   # creates an array, same shape and type as data
+        
+    # Directly subtract the background from the data in place
+    bkg.subfrom(data)
+    bkg.globalback    # Global "average" background level
+    bkg.globalrms     # Global "average" RMS of background
+        
+    # for the background subtracted data, detect objects in data given some threshold
+    thresh = th * bkg.globalrms    # ensure the threshold is high enough wrt background        
+    objs = sep.extract(data, thresh)
+
+    # calculate the Kron radius for each object, then we perform elliptical aperture photometry within that radius
+    kronrad, krflag = sep.kron_radius(data, objs['x'], objs['y'], objs['a'], objs['b'], objs['theta'], ap)
+    flux, fluxerr, flag = sep.sum_ellipse(data, objs['x'], objs['y'], objs['a'], objs['b'], objs['theta'], 2.5*kronrad, subpix=1)
+    flag |= krflag  # combine flags into 'flag'
+   
+    r_min = 1.75  # minimum diameter = 3.5
+    use_circle = kronrad * np.sqrt(objs['a'] * objs['b']) < r_min
+    x = objs['x']
+    y = objs['y']
+    cflux, cfluxerr, cflag = sep.sum_circle(data, x[use_circle], y[use_circle],
+                                            r_min, subpix=1)
+    flux[use_circle] = cflux
+    fluxerr[use_circle] = cfluxerr
+    flag[use_circle] = cflag
+   
+    # write to ascii table
+    table = Table([objs['x'], objs['y'], flux, objs['a'], objs['b'], objs['theta']], names=('x', 'y', 'flux', 'a', 'b', 'theta'))
+    return table             
                                         
 def get_mag_rad(familyname, objectname):
     
@@ -269,6 +313,8 @@ def get_mag_rad(familyname, objectname):
     mag_list =  np.array(ephemerides.icol(2))
     ra_sig = np.mean(np.mean(ephemerides.icol(3)))
     dec_sig = np.mean(np.mean(ephemerides.icol(4)))
+    
+    print '>> RA and DEC 3sigma error: {:2f} {:2f}'.format(ra_sig / 0.184, dec_sig / 0.184)
         
     if ra_sig > dec_sig:
         r_sig = ra_sig / 0.184
@@ -299,10 +345,19 @@ def get_coords(familyname, objectname, expnum, time_start, time_end):
     if dec.split()[0] < 0:
         sign = -1
     else:
-        sign = 1
+        sign = 1   
+        
+    ra_h = ra.split()[0]
+    ra_m = ra.split()[1]
+    ra_s = ra.split()[2]
+    dec_d = dec.split()[0]
+    dec_m = dec.split()[1]
+    dec_s = dec.split()[2]
     
-    ra_deg = float(HMS2deg(ra=ra))
-    dec_deg = float(HMS2deg(dec=dec))
+    # c = SkyCoord('00h42m30s', '+41d12m00s', frame='icrs')
+    c = SkyCoord('{}h{}m{}s'.format(ra_h, ra_m, ra_s), '{}d{}m{}s'.format(dec_d, dec_m, dec_s), frame='icrs')
+    ra_deg = c.ra.degree 
+    dec_deg = c.dec.degree 
                         
     return ra_deg, dec_deg, ra_dot, dec_dot
 
@@ -316,7 +371,7 @@ def query_jpl(objectname, time_start, time_end, params, step, su='d'):
     # form URL pieces that Horizon needs for its processing instructions
     urlArr = ["http://ssd.jpl.nasa.gov/horizons_batch.cgi?batch=1&COMMAND=",
                   '',
-                  "&MAKE_EPHEM='YES'&TABLE_TYPE='OBSERVER'&START_TIME=",
+                  "&MAKE_EPHEM='YES'&TABLE_TYPE='OBSERVER'&CENTER='568'&START_TIME=",
                   '',
                   "&STOP_TIME=",
                   '',
@@ -378,50 +433,6 @@ def query_jpl(objectname, time_start, time_end, params, step, su='d'):
     ephemerides = pd.DataFrame.from_csv(ephemCSVfile)
     
     return ephemerides
-    
-def sep_phot(data, ap, th):
-    ''' 
-    Preforms photometry by SEP, similar to source extractor 
-    '''
-
-    # Measure a spatially variable background of some image data (np array)
-    try:    
-        bkg = sep.Background(data) #, mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
-    except:
-        data = data.byteswap(True).newbyteorder()
-        bkg = sep.Background(data) #, mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
-        
-    # Evaluate the spatially variable background and RMS:
-    back = bkg.back() # creates an array, same shape and type as data
-    rms = bkg.rms()   # creates an array, same shape and type as data
-        
-    # Directly subtract the background from the data in place
-    bkg.subfrom(data)
-    bkg.globalback    # Global "average" background level
-    bkg.globalrms     # Global "average" RMS of background
-        
-    # for the background subtracted data, detect objects in data given some threshold
-    thresh = th * bkg.globalrms    # ensure the threshold is high enough wrt background        
-    objs = sep.extract(data, thresh)
-
-    # calculate the Kron radius for each object, then we perform elliptical aperture photometry within that radius
-    kronrad, krflag = sep.kron_radius(data, objs['x'], objs['y'], objs['a'], objs['b'], objs['theta'], ap)
-    flux, fluxerr, flag = sep.sum_ellipse(data, objs['x'], objs['y'], objs['a'], objs['b'], objs['theta'], 2.5*kronrad, subpix=1)
-    flag |= krflag  # combine flags into 'flag'
-   
-    r_min = 1.75  # minimum diameter = 3.5
-    use_circle = kronrad * np.sqrt(objs['a'] * objs['b']) < r_min
-    x = objs['x']
-    y = objs['y']
-    cflux, cfluxerr, cflag = sep.sum_circle(data, x[use_circle], y[use_circle],
-                                            r_min, subpix=1)
-    flux[use_circle] = cflux
-    fluxerr[use_circle] = cfluxerr
-    flag[use_circle] = cflag
-   
-    # write to ascii table
-    table = Table([objs['x'], objs['y'], flux, objs['a'], objs['b'], objs['theta']], names=('x', 'y', 'flux', 'a', 'b', 'theta'))
-    return table
     
 def append_table(table, pvwcs, zeropt):
     
@@ -493,26 +504,26 @@ def compare_to_catalogue(table, pvwcs):
     transients = Table([trans_x, trans_y, trans_a, trans_b, trans_ra ,trans_dec, trans_mag, trans_theta], names=['x', 'y', 'a', 'b', 'ra', 'dec', 'mag', 'theta'])
     return transients, cat_objs
 
-def find_neighbours(transients, pvwcs, r_err, pRA, pDEC, expnum_p):
+def find_neighbours(transients, pvwcs, r_sig, pRA, pDEC, expnum_p):
     
     pX, pY = pvwcs.sky2xy(pRA, pDEC)
-    print "  Predicted RA, DEC : {}  {}".format(pRA, pDEC)
-    print "  Predicted x, y : {}  {}".format(pX, pY)
+    print "  Predicted RA, DEC : {:2f}  {:2f}".format(pRA, pDEC)
+    print "  Predicted x, y : {:1f}  {:1f}".format(pX, pY)
     
     found = True
     
-    i_list = neighbour_search(transients, pvwcs, r_err, pRA, pDEC)
+    i_list = neighbour_search(transients, pvwcs, r_sig, pRA, pDEC)
     if len(i_list) == 0:
         print '-- Expanding radius of nearest neighbour search by 1.5x'
-        i_list = neighbour_search(transients, pvwcs, 2*r_err, pRA, pDEC)
+        i_list = neighbour_search(transients, pvwcs, 2*r_sig, pRA, pDEC)
         if len(i_list) == 0:
-            print 'WARNING: No nearest neighbours were found within {} ++++++++++++++++++++++'.format(r_err*1.5)
+            print 'WARNING: No nearest neighbours were found within {} ++++++++++++++++++++++'.format(r_sig*1.5)
             ascii.write(transients, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum_p))
             found = False
                 
     return i_list, found
     
-def neighbour_search(septable, pvwcs, r_err, pRA, pDEC):    
+def neighbour_search(septable, pvwcs, r_sig, pRA, pDEC):    
     '''
     Computes the nearest neighbours to predicted coordinates within an RA/DEC uncertainty circle
     '''
@@ -522,7 +533,7 @@ def neighbour_search(septable, pvwcs, r_err, pRA, pDEC):
     
     # parse through table and get RA and DEC closest to predicted coordinates (in pixels)
     coords = np.array([pX, pY])
-    i_list = tree.query_ball_point(coords, r_err)
+    i_list = tree.query_ball_point(coords, r_sig)
     
     return i_list
     
@@ -534,11 +545,15 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
         Calculates eccentricity, passes if greater than minimum value that is inputted
     '''
     
-    err = 30.0
-    r_pix = exptime * ( (ra_dot)**2 + (dec_dot)**2 )**0.5 / (3600 * 0.184)
-    r_pix_err = exptime * (err/100) * ( abs(ra_dot) + abs(dec_dot) ) / (3600 * 0.184)
-    assert r_pix_err != 0
-    print '  Error allowance is set to {} percent'.format(err)    
+    # calculate theoretical focal length 
+    err = 40.0
+    print '>> Error allowance is set to {} percent'.format(err)
+    
+    print '>> RA_dot: {}, DEC_dot: {}, exptime: {}'.format(ra_dot, dec_dot, exptime)
+    
+    f_pix = ( (ra_dot/2)**2 + (dec_dot/2)**2 )**0.5 * (exptime/(3600 * 0.184))
+    f_pix_err = (err/100) * 0.5 * ( abs(ra_dot) + abs(dec_dot) ) * (exptime/(3600 * 0.184))
+    assert f_pix_err != 0
         
     mRA_pix = None
     mag_sep_list = []
@@ -560,7 +575,7 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
     else:
         magrange = maxmag - minmag
     
-    print '  Theoretical: {} +/- {}'.format(r_pix, r_pix_err)
+    print '  Theoretical focal length: {:2f} +/- {:2f}'.format(f_pix, f_pix_err)
     
     something_good = False
     for i in i_list:
@@ -569,12 +584,13 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
         a = septable['a'][i]
         b = septable['b'][i]
         
-        r = 2 * ( a**2 - b**2 )**0.5
+        # measured focal length from photometry values
+        f = ( a**2 - b**2 )**0.5
 
         if mag_sep > 0:
             something_good = True
             # apply both eccentricity and magnitude conditions
-            if (abs(mag_sep - mean) < magrange) & (abs(r-r_pix) < r_pix_err):
+            if (abs(mag_sep - mean) < magrange) & (abs(f-f_pix) < f_pix_err):
                 mRA_pix = septable['x'][i]
                 mDEC_pix = septable['y'][i]
                 
@@ -588,9 +604,9 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
                 a_list.append(septable['a'][i])
                 b_list.append(septable['b'][i])
 
-                print '  Measured values for index {}: {}, {} {}'.format(i, r, a, b)
+                print '  Measured values (r, a, b) for index {}: {:2f}, {:2f} {:2f}'.format(i, f, a, b)
             
-            elif (abs(r-r_pix) < r_pix_err):
+            elif (abs(f-f_pix) < f_pix_err):
                 mRA_pix = septable['x'][i]
                 mDEC_pix = septable['y'][i]
                 
@@ -604,9 +620,9 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
                 a_list.append(septable['a'][i])
                 b_list.append(septable['b'][i])
                 
-                print '  Measured values for index {}: {}, {} {}'.format(i, r, a, b)
+                print '  Measured values (r, a, b) for index {}: {:2f}, {:2f} {:2f}'.format(i, f, a, b)
                                 
-                print "WARNING: Magnitude is outside range for index {}: calculated, {} +/- {}, measured, {}".format(i, mean, magrange, mag_sep)
+                print "WARNING: Magnitude is outside range for index {}: calculated, {:2f} +/- {:2f}, measured, {:2f}".format(i, mean, magrange, mag_sep)
                 
             elif (abs(mag_sep - mean) < magrange):
                 mRA_pix = septable['x'][i]
@@ -623,7 +639,7 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
                 b_list.append(septable['b'][i])
                 
                 print '  Measured magnitude and predicted: {} {}'.format(mag_sep, mean)
-                print "WARNING: Ellipticity is outside range for index {}: calculated, {} +/- {}, measured, {}".format(i, r_pix, r_pix_err, r)
+                print "WARNING: Ellipticity is outside range for index {}: calculated, {:2f} +/- {:2f}, measured, {:2f}".format(i, f_pix, f_pix_err, f)
                   
                     
     good_neighbours = Table([index_list, mRA_pix_list, mDEC_pix_list, ra_list, dec_list, mag_sep_list, a_list, b_list, theta_list], 
@@ -636,19 +652,23 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
     if mRA_pix == None:
         print "WARNING: No condition could not be satisfied <<<<<<<<<<<<<<<<<<<<<<<<<<<<"
         print '  Nearest neighbour list: {}'.format(i_list)
-        print "  Mag mean, accepted error, and fitting mags: {} {}".format(mean, magrange)
+        print "  Mag mean, accepted error, and fitting mags: {:2f} {:2f}".format(mean, magrange)
         ascii.write(septable, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum))
         return
         
     else: 
-        return good_neighbours, r_pix_err 
+        return good_neighbours, f_pix_err 
         
 def check_involvement(objectdata, septable, r_err):
+    '''
+    Determine whether two objects are involved (ie overlapping psf's)
+    '''
     
     tree = cKDTree(zip((np.array(septable['x'])).ravel(), (np.array(septable['y'])).ravel()))
     search_r = 50
     i_list = tree.query_ball_point([objectdata['x'][0], objectdata['y'][0]], search_r)
     
+    # polygon of identified asteroid
     print '>> Selects first object in good_neighbours to make polygon from'
     a = objectdata['a'][0]+r_err
     b = objectdata['b'][0]+r_err
@@ -665,24 +685,37 @@ def check_involvement(objectdata, septable, r_err):
     p3 = (x+a_x-b_x, y+a_y-b_y)
     p4 = (x-a_x-b_x, y-a_y-b_y)
     
-    print p1, p2, p3, p4
+    print '>> Asteroid boundary points: {} {} {} {}'.format(p1, p2, p3, p4)
     
     polygon = Polygon([p1, p2, p3, p4])
     
+    involved = False
     if len(i_list) > 1:
-        print '  Objects within {} pixels of identified asteroid (inc. ast.): {}'.format(search_r, i_list)
+        print '>> Objects within {} pixels of identified asteroid (inc. ast.): {}'.format(search_r, i_list)
         for i in i_list:
             x1 = septable['x'][i]
             y1 = septable['y'][i]
+            a1 = septable['a'][i]+5
+            b1 = septable['b'][i]+5
+            th1 = septable['theta'][i]
+            a_x1 = a*math.cos(th1)
+            a_y1 = a*math.sin(th1)
+            b_x1 = b*math.sin(th1)
+            b_y1 = b*math.cos(th1)
+            p5 = (x1+b_x1-a_x1, y1-a_y1+b_y1)
+            p6 = (x1+a_x1+b_x1, y1+a_y1+b_y1)
+            p7 = (x1+a_x1-b_x1, y1+a_y1-b_y1)
+            p8 = (x1-a_x1-b_x1, y1-a_y1-b_y1)
+            polygon1 = Polygon([p5, p6, p7, p8])
         
-            point = Point(x1, y1)
-            if polygon.contains(point) == True and x1 != x:
+            if polygon.intersects(polygon1) == True and x1 != x:
                 print '>>> Object is involved with point at x, y: {} {}'.format(x1, y1)
-            else:
-                print '  Object is not involved.'
+                involved = True
     
     else:
         print 'No other objects within {} pixels of identified asteroid'.format(search_r)
+    if involved == False:
+        print '  Object is not involved.'
         
 def check_num_stars(num_objs, size, objectname, expnum_p, username, password, familyname):
         
@@ -729,11 +762,10 @@ def print_output(familyname, objectname, expnum_p, object_data, ap, th):
         with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'a') as outfile:
             try:
                 for i in range(0, len(object_data)):
-                    #'Object', "Image", 'flux', 'mag', 'RA', 'DEC', 'ecc', 'index'
-                    #index      flux          mag            x             y      
-                    outfile.write('{} {} {} {} {} {}\n'.format(
-                          objectname, expnum_p, object_data[i][1], object_data[i][2], object_data[i][3], object_data[i][4], 
-                          object_data[i][0]))
+                    #'Object', "Image", 'RA', 'DEC', 'mag', 'x', 'y'
+                    outfile.write('{} {} {} {} {} {} {}\n'.format(
+                          objectname, expnum_p, object_data[i][2], object_data[i][3], object_data[i][4], object_data[i][0], 
+                          object_data[i][1]))
             except:
                 print "ERROR: cannot write to outfile <<<<<<<<<<<<<<<<<<<<<<<<<<"
     
@@ -797,26 +829,6 @@ def add_day(time_end, date_range_t):
     time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], month, day)        
     return time_end
 
-def HMS2deg(ra='', dec=''):
-    RA, DEC, rs, ds = '', '', 1, 1
-    if dec:
-        D, M, S = [float(i) for i in dec.split()]
-        if str(D)[0] == '-':
-            ds, D = -1, abs(D)
-        deg = D + (M/60) + (S/3600)
-        DEC = '{0}'.format(deg*ds)
-  
-    if ra:
-        H, M, S = [float(i) for i in ra.split()]
-        if str(H)[0] == '-':
-            rs, H = -1, abs(H)
-        deg = (H*15) + (M/4) + (S/240)
-        RA = '{0}'.format(deg*rs)
-
-    if ra and dec:
-        return (RA, DEC)
-    else:
-        return RA or DEC    
     
 if __name__ == '__main__':
     main()
