@@ -81,7 +81,7 @@ def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', ra
         
     if  os.path.exists(image_list_path):  
         table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['Object', 'Image', 'RA', 'DEC'], sep=' ', dtype={'Object':object})
-        for row in range(3,10):#len(table)):
+        for row in range(1,10):#len(table)):
             print '\n----- Searching for {} {} -----'.format(table['Object'][row], table['Image'][row])
             
             postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(table['Object'][row], table['Image'][row], table['RA'][row], table['DEC'][row])

@@ -27,7 +27,7 @@ import get_stamps
 
 client = vos.Client()
 
-''' 
+'''
 Preforms photometry on .fits files given an input of family name and object name
 Identifies object in image from predicted coordinates, magnitude (and eventually shape)
 Assumes files organised as:
@@ -42,7 +42,7 @@ NOTES, to do:
     - reformat list appending
 '''
 
-def main(): 
+def main():
     
     parser = argparse.ArgumentParser(
                         description='For a given set of fits images, \
@@ -72,15 +72,15 @@ def main():
                         help="passband: default is r'")
     parser.add_argument('--type',
                         default='p',
-                        choices=['o', 'p', 's'], 
+                        choices=['o', 'p', 's'],
                         help="restrict type of image (unprocessed, reduced, calibrated)")
-                            
+    
     args = parser.parse_args()
     
     find_objects_by_phot(args.family, args.object, float(args.aperture), float(args.thresh), args.filter, args.type)
-    
-def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=3.5, filtertype='r', imagetype='p'):
 
+def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=3.5, filtertype='r', imagetype='p'):
+    
     out_filename = '{}_r{}_t{}_output.txt'.format(familyname, aperture, thresh)
     with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'w') as outfile:
         outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('Object', "Image", 'RA', 'DEC', 'flux', 'mag', 'x', 'y'))
@@ -104,25 +104,26 @@ def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=3.5, filtertyp
                 if len(item.split()) > 0:
                     image_list.append(item.split()[0])
                     expnum_list.append(item.split()[1])
-    else:  
+    else:
         image_list, expnum_list, ra_list, dec_list = get_image_info(familyname, filtertype, imagetype)
-        
+    
     if objectname == None:
         for index, imageobject in enumerate(image_list):
             print 'Finding asteroid {} in family {} '.format(objectname, familyname)
-            iterate_thru_images(familyname, imageobject, expnum_list[index], ap, th, filtertype, imagetype)    
-    else:  
+            iterate_thru_images(familyname, imageobject, expnum_list[index], ap, th, filtertype, imagetype)
+    else:
         for index, imageobject in enumerate(image_list):
             if objectname == imageobject:
                 print 'Finding asteroid {} in family {} '.format(objectname, familyname)
                 iterate_thru_images(familyname, objectname, expnum_list[index], ap, th, filtertype, imagetype)
-        
+
 
 def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap=10.0, th=5.0, filtertype='r', imagetype='p'):
-
-    success = False            
+    
+    success = False
+    
     # initiate directories
-    init_dirs(familyname, objectname) 
+    init_dirs(familyname, objectname)
     
     try:
         print "-- Performing photometry on image {} ".format(expnum_p)
@@ -149,9 +150,9 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
     r_new, r_old, enough = check_num_stars(num_cat_objs, size, objectname, expnum_p, username, password, familyname)
     if enough == False:
         return
-        
+    
     print '-- Identifying object from nearest neighbours wihing {} pixels'.format(r_sig)
-    i_list, found = find_neighbours(transients, pvwcs, r_sig, pRA, pDEC, expnum_p)
+    i_list, found = find_neighbours(transients, pvwcs, r_sig, pRA, pDEC, expnum_p, objectname)
     if found == False:
         success = True
         return success
@@ -160,7 +161,7 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
         
         good_neighbours, mean = iden_good_neighbours(expnum_p, i_list, transients, zeropt, mag_list_jpl, ra_dot, dec_dot, exptime, pvwcs)
         print good_neighbours
-
+        
         print_output(familyname, objectname, expnum_p, good_neighbours, ap, th)
         
         if len(good_neighbours) == 1:
@@ -170,14 +171,14 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
                 #cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, r_old, username, password)
         
         success = True
-        
+    
     except Exception, e:
         print 'ERROR: {}'.format(e)
-        #get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)   
+        #get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
     '''
     good_neighbours, r_err = iden_good_neighbours(expnum_p, i_list, transients, zeropt, mag_list_jpl, ra_dot, dec_dot, exptime, pvwcs)
     print good_neighbours
-
+    
     print_output(familyname, objectname, expnum_p, good_neighbours, ap, th)
     
     if len(good_neighbours) == 1:
@@ -187,12 +188,12 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
             #cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, r_old, username, password)
     
     success = True
-                
-    return success
-            
-def get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, filtertype, imagetype):    
     
-    stamp_found = False      
+    return success
+
+def get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, filtertype, imagetype):
+    
+    stamp_found = False
     for file in client.listdir(vos_dir): # images named with convention: object_expnum_RA_DEC.fits
         if file.endswith('.fits') == True:
             objectname_file = file.split('_')[0]
@@ -202,7 +203,7 @@ def get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, 
                 file_path = '{}/{}'.format(stamps_dir, file)
                 storage.copy('{}/{}'.format(vos_dir, file), file_path)
                 try:
-                    with fits.open('{}/{}'.format(stamps_dir, file)) as hdulist: 
+                    with fits.open('{}/{}'.format(stamps_dir, file)) as hdulist:
                         #print hdulist.info()
                         
                         if hdulist[0].data is None:
@@ -213,64 +214,64 @@ def get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, 
                             header2 = fits.getheader(file_path, 2)
                             size = header['NAXIS1']+header2['NAXIS1']
                             print 'good until here'
-                        
+                            
                             table1 = sep_phot(data1, ap, th)
                             print 'this time it worked'
                             table2 = sep_phot(data2, ap, th)
                             table = vstack([table1, table2])
                             #ascii.write(table, os.path.join(stamps_dir, '{}_phot.txt'.format(expnum_p)))
-                            
+                        
                         else:
                             data = fits.getdata(file_path)
                             header = fits.getheader(file_path)
                             size = header['NAXIS1']
                             table = sep_phot(data, ap, th)
                             #ascii.write(table, os.path.join(stamps_dir, '{}_phot.txt'.format(expnum_p)))
-
+                
                 except Exception, e:
                     print 'ERROR: {} xxxxxxxxxxx'.format(e)
                     get_stamps.get_one_stamp(objectname, expnum_p, 0.03, username, password, familyname)
                     raise
-               
+                
                 os.unlink('{}/{}'.format(stamps_dir, file))
                 pvwcs = wcs.WCS(header)
                 zeropt = header['PHOTZP']
                 exptime = header['EXPTIME']
                 start = '{} {}'.format(header['DATE-OBS'], header['UTIME'])
                 end = '{} {}'.format(header['DATEEND'], header['UTCEND'])
-               
+                
                 return table, exptime, zeropt, size, pvwcs, stamp_found, start, end
-             
-def sep_phot(data, ap, th):
-    ''' 
-    Preforms photometry by SEP, similar to source extractor 
-    '''
 
+def sep_phot(data, ap, th):
+    '''
+    Preforms photometry by SEP, similar to source extractor
+    '''
+    
     # Measure a spatially variable background of some image data (np array)
-    try:    
+    try:
         bkg = sep.Background(data) #, mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
     except:
         data = data.byteswap(True).newbyteorder()
         bkg = sep.Background(data) #, mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
-        
+    
     # Evaluate the spatially variable background and RMS:
     back = bkg.back() # creates an array, same shape and type as data
     rms = bkg.rms()   # creates an array, same shape and type as data
-        
+    
     # Directly subtract the background from the data in place
     bkg.subfrom(data)
     bkg.globalback    # Global "average" background level
     bkg.globalrms     # Global "average" RMS of background
-        
+    
     # for the background subtracted data, detect objects in data given some threshold
-    thresh = th * bkg.globalrms    # ensure the threshold is high enough wrt background        
+    thresh = th * bkg.globalrms    # ensure the threshold is high enough wrt background
     objs = sep.extract(data, thresh)
-
+    
     # calculate the Kron radius for each object, then we perform elliptical aperture photometry within that radius
     kronrad, krflag = sep.kron_radius(data, objs['x'], objs['y'], objs['a'], objs['b'], objs['theta'], ap)
     flux, fluxerr, flag = sep.sum_ellipse(data, objs['x'], objs['y'], objs['a'], objs['b'], objs['theta'], 2.5*kronrad, subpix=1)
     flag |= krflag  # combine flags into 'flag'
-   
+    
     r_min = 1.75  # minimum diameter = 3.5
     use_circle = kronrad * np.sqrt(objs['a'] * objs['b']) < r_min
     x = objs['x']
@@ -280,11 +281,11 @@ def sep_phot(data, ap, th):
     flux[use_circle] = cflux
     fluxerr[use_circle] = cfluxerr
     flag[use_circle] = cflag
-   
+    
     # write to ascii table
     table = Table([objs['x'], objs['y'], flux, objs['a'], objs['b'], objs['theta']], names=('x', 'y', 'flux', 'a', 'b', 'theta'))
-    return table             
-                                        
+    return table
+
 def get_mag_rad(familyname, objectname):
     
     if type(objectname) is not str:
@@ -296,16 +297,16 @@ def get_mag_rad(familyname, objectname):
         for line in infile.readlines()[1:]:
             if len(line.split()) > 0:
                 if objectname == line.split()[0]:
-                    date_range.append(float(line.split()[5]))   
-                    
+                    date_range.append(float(line.split()[5]))
+    
     date_range_t = Time(date_range, format='mjd', scale='utc')
     assert  len(date_range_t.iso) > 0
     time_start = ((date_range_t.iso[0]).split())[0] + ' 00:00:00.0'
     time_end = ((date_range_t.iso[-1]).split())[0] + ' 00:00:00.0'
-
+    
     if time_start == time_end:
         time_end = add_day(time_end, date_range_t)
-        
+    
     #print " Date range in query: {} -- {}".format(time_start, time_end)
     
     ephemerides = query_jpl(objectname, time_start, time_end, params=[9, 36], step=1)
@@ -315,12 +316,12 @@ def get_mag_rad(familyname, objectname):
     dec_sig = np.mean(np.mean(ephemerides.icol(4)))
     
     print '>> RA and DEC 3sigma error: {:.2f} {:.2f}'.format(ra_sig / 0.184, dec_sig / 0.184)
-        
+    
     if ra_sig > dec_sig:
         r_sig = ra_sig / 0.184
     else:
         r_sig = dec_sig / 0.184
-
+    
     if r_sig < 10: # 0.003 deg * 3600 "/deg / 0.187 "/pix
         r_sig = 10
     
@@ -335,7 +336,7 @@ def get_coords(familyname, objectname, expnum, time_start, time_end):
         objectname = str(objectname)
     
     ephemerides = query_jpl(objectname, time_start, time_end, params=[1, 3], step='1', su='m')
-            
+    
     mid = int(len(ephemerides)/2)
     ra = ephemerides['R.A._(ICRF/J2000.0)'][mid]
     dec = ephemerides[' DEC_(ICRF/J2000.0)'][mid]
@@ -345,8 +346,8 @@ def get_coords(familyname, objectname, expnum, time_start, time_end):
     if dec.split()[0] < 0:
         sign = -1
     else:
-        sign = 1      
-        
+        sign = 1
+    
     ra_h = ra.split()[0]
     ra_m = ra.split()[1]
     ra_s = ra.split()[2]
@@ -356,11 +357,11 @@ def get_coords(familyname, objectname, expnum, time_start, time_end):
     
     # c = SkyCoord('00h42m30s', '+41d12m00s', frame='icrs')
     c = SkyCoord('{}h{}m{}s'.format(ra_h, ra_m, ra_s), '{}d{}m{}s'.format(dec_d, dec_m, dec_s), frame='icrs')
-    ra_deg = c.ra.degree 
-    dec_deg = c.dec.degree 
+    ra_deg = c.ra.degree
+    dec_deg = c.dec.degree
     
     ra_dot = ra_dot_cos_dec / math.cos(math.radians(dec_deg))
-                        
+    
     return ra_deg, dec_deg, ra_dot, dec_dot
 
 def query_jpl(objectname, time_start, time_end, params, step, su='d'):
@@ -369,7 +370,7 @@ def query_jpl(objectname, time_start, time_end, params, step, su='d'):
     s = "'"
     for p in params:
         s += "{},".format(p)
-
+    
     # form URL pieces that Horizon needs for its processing instructions
     urlArr = ["http://ssd.jpl.nasa.gov/horizons_batch.cgi?batch=1&COMMAND=",
                   '',
@@ -381,7 +382,7 @@ def query_jpl(objectname, time_start, time_end, params, step, su='d'):
                   '',
                   "&QUANTITIES=" + s,
                   "&CSV_FORMAT='YES'"]
-          
+    
     # change the object name, start and end times, and time step into proper url-formatting
     url_style_output = []
     for obj in [objectname, time_start, time_end]:
@@ -392,14 +393,14 @@ def query_jpl(objectname, time_start, time_end, params, step, su='d'):
             ob =  "'" + objectname + "'"
         url_style_output.append(ob)
     step = "'" + str(step) + "%20" + su + "'"
- 
+    
     # URL components
     urlArr[1] = url_style_output[0]  # formatted object name
     urlArr[3] = url_style_output[1]  # start time
     urlArr[5] = url_style_output[2]  # end time
-    urlArr[7] = step  # timestep   
+    urlArr[7] = step  # timestep
     urlStr = "".join(urlArr)  # create the url to pass to Horizons
-       
+    
     # Query Horizons; if it's busy, wait and try again in a minute
     done = 0
     while not done:
@@ -435,7 +436,7 @@ def query_jpl(objectname, time_start, time_end, params, step, su='d'):
     ephemerides = pd.DataFrame.from_csv(ephemCSVfile)
     
     return ephemerides
-    
+
 def append_table(table, pvwcs, zeropt):
     
     ra_list = []
@@ -470,7 +471,7 @@ def compare_to_catalogue(table, pvwcs):
     #pos2 = catalogue.as_matrix(columns=['ra', 'dec'])
     #match1, match2 = match_lists(pos1, pos2, tolerance=0.005111111)
     #print match1, match2
-     
+    
     sep_tol = 5 * 0.184 / 3600 # pixels to degrees
     mag_tol = 0.2
     
@@ -484,10 +485,10 @@ def compare_to_catalogue(table, pvwcs):
     trans_a = []
     trans_b = []
     trans_theta = []
-	
+    
     for row in range(len(septable)):
         #index = catalogue[( abs(catalogue.ra - septable['ra'][row]) < 0.0051111 )]
-        index = catalogue.query('({} < ra < {}) & ({} < dec < {}) & ({} < mag < {})'.format(septable['ra'][row]-sep_tol, septable['ra'][row]+sep_tol, 
+        index = catalogue.query('({} < ra < {}) & ({} < dec < {}) & ({} < mag < {})'.format(septable['ra'][row]-sep_tol, septable['ra'][row]+sep_tol,
                                                                                             septable['dec'][row]-sep_tol, septable['dec'][row]+sep_tol,
                                                                                             septable['mag'][row]-mag_tol, septable['mag'][row]+mag_tol))
         if len(index) == 0:
@@ -505,11 +506,11 @@ def compare_to_catalogue(table, pvwcs):
     
     if len(trans_x) == 0:
         print "WARNING: No transients identified"
-            
+    
     transients = Table([trans_x, trans_y, trans_a, trans_b, trans_ra ,trans_dec, trans_mag, trans_flux, trans_theta], names=['x', 'y', 'a', 'b', 'ra', 'dec', 'mag', 'flux', 'theta'])
     return transients, cat_objs
 
-def find_neighbours(transients, pvwcs, r_sig, pRA, pDEC, expnum_p):
+def find_neighbours(transients, pvwcs, r_sig, pRA, pDEC, expnum_p, objectname):
     
     pX, pY = pvwcs.sky2xy(pRA, pDEC)
     print "  Predicted RA, DEC : {:.2f}  {:.2f}".format(pRA, pDEC)
@@ -524,15 +525,19 @@ def find_neighbours(transients, pvwcs, r_sig, pRA, pDEC, expnum_p):
         if len(i_list) == 0:
             print 'WARNING: No nearest neighbours were found within {} ++++++++++++++++++++++'.format(r_sig*1.5)
             ascii.write(transients, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum_p))
+            with open('asteroid_families/all/no_object_found.txt', 'a') as infile:
+                infile.write(transients, 'asteroid_families/no_object_found/{}_phot.txt'.format(expnum_p))
+            
+            ascii.write('{}\t{}\n'.format(objectname, expnum_p))
             found = False
-                
-    return i_list, found
     
-def neighbour_search(septable, pvwcs, r_sig, pRA, pDEC):    
+    return i_list, found
+
+def neighbour_search(septable, pvwcs, r_sig, pRA, pDEC):
     '''
     Computes the nearest neighbours to predicted coordinates within an RA/DEC uncertainty circle
     '''
-    tree = cKDTree(zip((np.array(septable['x'])).ravel(), (np.array(septable['y'])).ravel()))    
+    tree = cKDTree(zip((np.array(septable['x'])).ravel(), (np.array(septable['y'])).ravel()))
     
     pX, pY = pvwcs.sky2xy(pRA, pDEC) # convert from WCS to pixels
     
@@ -541,7 +546,7 @@ def neighbour_search(septable, pvwcs, r_sig, pRA, pDEC):
     i_list = tree.query_ball_point(coords, r_sig)
     
     return i_list
-    
+
 def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot, dec_dot, exptime, pvwcs):
     '''
     Selects nearest neighbour object from predicted coordinates as object of interest
@@ -550,7 +555,7 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
         Calculates eccentricity, passes if greater than minimum value that is inputted
     '''
     
-    # calculate theoretical focal length 
+    # calculate theoretical focal length
     err = 40.0
     print '>> Error allowance is set to {} percent'.format(err)
     
@@ -559,7 +564,7 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
     f_pix = ( (ra_dot/2)**2 + (dec_dot/2)**2 )**0.5 * (exptime/(3600 * 0.184))
     f_pix_err = (err/100) * 0.5 * ( abs(ra_dot) + abs(dec_dot) ) * (exptime/(3600 * 0.184))
     assert f_pix_err != 0
-        
+    
     mRA_pix = None
     mag_sep_list = []
     index_list = []
@@ -592,7 +597,7 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
         
         # measured focal length from photometry values
         f = ( a**2 - b**2 )**0.5
-
+        
         if mag_sep > 0:
             something_good = True
             # apply both eccentricity and magnitude conditions
@@ -603,14 +608,14 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
                 index_list.append(i)
                 mRA_pix_list.append(mRA_pix)
                 mDEC_pix_list.append(mDEC_pix)
-                mag_sep_list.append(mag_sep) 
+                mag_sep_list.append(mag_sep)
                 flux_list.append(septable['flux'][i])
-                ra_list.append(septable['ra'][i])             
+                ra_list.append(septable['ra'][i])
                 dec_list.append(septable['dec'][i])
                 theta_list.append(septable['theta'][i])
                 a_list.append(septable['a'][i])
                 b_list.append(septable['b'][i])
-
+                
                 print '  Measured values (r, a, b) for index {}: {:.2f}, {:.2f} {:.2f}'.format(i, f, a, b)
             
             elif (abs(f-f_pix) < f_pix_err):
@@ -620,18 +625,18 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
                 index_list.append(i)
                 mRA_pix_list.append(mRA_pix)
                 mDEC_pix_list.append(mDEC_pix)
-                mag_sep_list.append(mag_sep) 
+                mag_sep_list.append(mag_sep)
                 flux_list.append(septable['flux'][i])
-                ra_list.append(septable['ra'][i])             
+                ra_list.append(septable['ra'][i])
                 dec_list.append(septable['dec'][i])
                 theta_list.append(septable['theta'][i])
                 a_list.append(septable['a'][i])
                 b_list.append(septable['b'][i])
                 
                 print '  Measured values (r, a, b) for index {}: {:.2f}, {:.2f} {:.2f}'.format(i, f, a, b)
-                                
-                print "WARNING: Magnitude is outside range for index {}: calculated, {:.2f} +/- {:.2f}, measured, {:.2f}".format(i, mean, magrange, mag_sep)
                 
+                print "WARNING: Magnitude is outside range for index {}: calculated, {:.2f} +/- {:.2f}, measured, {:.2f}".format(i, mean, magrange, mag_sep)
+            
             elif (abs(mag_sep - mean) < magrange):
                 mRA_pix = septable['x'][i]
                 mDEC_pix = septable['y'][i]
@@ -639,9 +644,9 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
                 index_list.append(i)
                 mRA_pix_list.append(mRA_pix)
                 mDEC_pix_list.append(mDEC_pix)
-                mag_sep_list.append(mag_sep) 
+                mag_sep_list.append(mag_sep)
                 flux_list.append(septable['flux'][i])
-                ra_list.append(septable['ra'][i])             
+                ra_list.append(septable['ra'][i])
                 dec_list.append(septable['dec'][i])
                 theta_list.append(septable['theta'][i])
                 a_list.append(septable['a'][i])
@@ -649,11 +654,11 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
                 
                 print '  Measured magnitude and predicted: {} {}'.format(mag_sep, mean)
                 print "WARNING: Ellipticity is outside range for index {}: calculated, {:.2f} +/- {:.2f}, measured, {:.2f}".format(i, f_pix, f_pix_err, f)
-                  
                     
-    good_neighbours = Table([mRA_pix_list, mDEC_pix_list, ra_list, dec_list, mag_sep_list, flux_list, a_list, b_list, theta_list], 
+    
+    good_neighbours = Table([mRA_pix_list, mDEC_pix_list, ra_list, dec_list, mag_sep_list, flux_list, a_list, b_list, theta_list],
                 names=('x', 'y', 'ra', 'dec', 'mag', 'flux', 'a', 'b', 'theta'))
-                    
+    
     if something_good == False:
         print "WARNING: Flux of nearest neighbours measured to be 0.0"
         return
@@ -664,10 +669,10 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
         print "  Mag mean, accepted error, and fitting mags: {:.2f} {:.2f}".format(mean, magrange)
         ascii.write(septable, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum))
         return
-        
-    else: 
-        return good_neighbours, f_pix_err 
-        
+    
+    else:
+        return good_neighbours, f_pix_err
+
 def check_involvement(objectdata, septable, r_err):
     '''
     Determine whether two objects are involved (ie overlapping psf's)
@@ -716,7 +721,7 @@ def check_involvement(objectdata, septable, r_err):
             p7 = (x1+a_x1-b_x1, y1+a_y1-b_y1)
             p8 = (x1-a_x1-b_x1, y1-a_y1-b_y1)
             polygon1 = Polygon([p5, p6, p7, p8])
-        
+            
             if polygon.intersects(polygon1) == True and x1 != x:
                 print '>>> Object is involved with point at x, y: {} {}'.format(x1, y1)
                 involved = True
@@ -725,47 +730,32 @@ def check_involvement(objectdata, septable, r_err):
         print 'No other objects within {} pixels of identified asteroid'.format(search_r)
     if involved == False:
         print '  Object is not involved.'
-        
+
 def check_num_stars(num_objs, size, objectname, expnum_p, username, password, familyname):
-        
-    # r_old = size * 0.184 / 3600
-    # r_new = r_old + 0.05
     
     enough = True
-    
     r_old = size * 0.184 / 3600
-    r_new = r_old + 0.01
-    
-    '''if size < 200:
-        r_new = 0.02
-        r_old = 0.02
-    if 200 < size < 500:
-        r_new = 0.03
-        r_old = 0.02
-    if 500 < size < 750:
-        r_new = 0.04
-        r_old = 0.02
-    '''
+    r_new = r_old + 0.005
     
     print '  Number of objects in image: {}'.format(num_objs)
     if 0 < num_objs <= 10:
         r_new = r_old + 0.03
         enough = False
-        print '  Not enough stars in the stamp <<<<<<<<<<<<<<<<<<<'              
-        #get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
-    if 10 < num_objs < 30: 
+        print '  Not enough stars in the stamp <<<<<<<<<<<<<<<<<<<'
+        get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
+    if 10 < num_objs < 30:
         r_new = r_old + 0.01
         enough = False
-        print '  Not enough stars in the stamp <<<<<<<<<<<<<<<<<<<'                    
-        #get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
+        print '  Not enough stars in the stamp <<<<<<<<<<<<<<<<<<<'
+        get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
     
-    return r_new, r_old, enough 
-    
-def print_output(familyname, objectname, expnum_p, object_data, ap, th):
+    return r_new, r_old, enough
 
+def print_output(familyname, objectname, expnum_p, object_data, ap, th):
+    
     if object_data is None:
         print "WARNING: Could not identify object {} in image".format(objectname, expnum_p)
-        
+    
     else:
         out_filename = '{}_r{}_t{}_output.txt'.format(familyname, ap, th)
         with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'a') as outfile:
@@ -774,31 +764,31 @@ def print_output(familyname, objectname, expnum_p, object_data, ap, th):
                     #'Object', "Image", 'RA', 'DEC', 'flux', 'mag', 'x', 'y'
 					# good_neighbours = 'x', 'y', 'ra', 'dec', 'mag', 'flux', 'a', 'b', 'theta'
                     #outfile.write('{} {} {} {} {} {} {}\n'.format(
-                          #objectname, expnum_p, object_data[i][2], object_data[i][3], object_data[i][4], object_data[i][4], object_data[i][0], 
+                          #objectname, expnum_p, object_data[i][2], object_data[i][3], object_data[i][4], object_data[i][4], object_data[i][0],
                           #object_data[i][1]))
 					outfile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
-					    objectname, expnum_p, object_data['ra'][i], object_data['dec'][i], object_data['flux'][i], 
+					    objectname, expnum_p, object_data['ra'][i], object_data['dec'][i], object_data['flux'][i],
 						object_data['mag'][i], object_data['x'][i], object_data['y'][i]))
             except:
                 print "ERROR: cannot write to outfile <<<<<<<<<<<<<<<<<<<<<<<<<<"
-    
-        return object_data
-                    
-def cut_centered_stamp(familyname, objectname, expnum_p, object_data, r_old, username, password):
         
+        return object_data
+
+def cut_centered_stamp(familyname, objectname, expnum_p, object_data, r_old, username, password):
+    
     if object_data is not None:
         #for i in range(0, len(object_data)):
             # objectname, expnum_p, r_new, RA, DEC, username, password, familyname
         print '-- Cutting recentered stamp'
-        get_stamps.centered_stamp(objectname, expnum_p, r_old, object_data[0][5], object_data[0][6], username, password, familyname)                    
+        get_stamps.centered_stamp(objectname, expnum_p, r_old, object_data[0][5], object_data[0][6], username, password, familyname)
 
 def init_dirs(familyname, objectname):
     
-    # initiate vos directories 
+    # initiate vos directories
     global vos_dir
     vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
     assert exists(vos_dir, force=True)
-
+    
     
     # initiate local directories
     dir_path = os.path.dirname(os.path.abspath(__file__))
@@ -811,12 +801,12 @@ def init_dirs(familyname, objectname):
     stamps_dir = os.path.join(family_dir, familyname+'_stamps')
     if os.path.isdir(stamps_dir) == False:
         os.makedirs(stamps_dir)
-        
+    
     global imageinfo
     imageinfo = '{}_images.txt'.format(familyname)
     global image_list_path
     image_list_path = '{}/{}'.format(family_dir, imageinfo)
-        
+    
     assert os.path.exists('{}/{}'.format(family_dir, imageinfo))
     
     return family_dir, stamps_dir, vos_dir
@@ -838,11 +828,11 @@ def add_day(time_end, date_range_t):
             month = 1
         else:
             month = month + 1
-
-    time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], month, day)        
-    return time_end
-
     
+    time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], month, day)
+    return time_end
+    
+
 if __name__ == '__main__':
     main()
     
