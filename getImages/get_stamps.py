@@ -9,6 +9,7 @@ from astropy.time import Time
 import urllib2 as url
 import numpy as np
 from astropy.table import Table, Column
+import pandas as pd
 
 import sys
 sys.path.append('/Users/admin/Desktop/MainBeltComets/getImages/ossos_scripts/')
@@ -39,7 +40,7 @@ def main():
     parser = argparse.ArgumentParser(
         description='Parse an familyname.images.txt input file (get_images.py output) and create links in the postage stamp directory '
                     'that allow retrieval of cutouts of the FITS images associated with the CHT/MegaCam detections. '
-                    'Cutouts are defined on the WCS RA/DEC of the object position.')
+                    'Cutouts are defined on the WCS ra/dec of the object position.')
     parser.add_argument("--family", '-f',
                         action="store",
                         default=None,
@@ -69,42 +70,22 @@ def get_stamps(familyname, username, password, radius=0.01, suffix=None):
     family_dir = os.path.join(dir_path_base, familyname)
     if os.path.isdir(family_dir) == False:
         print "Invalid family name or directory does not exist"
+        
+    vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
+    if not storage.exists(vos_dir, force=True):
+        storage.mkdir(vos_dir)
+    assert storage.exists(vos_dir, force=True)    
 
-    image_list = '{}/{}_images.txt'.format(family_dir, familyname)
-    with open(image_list) as infile: 
-        for line in infile.readlines()[1:]: # skip header info
-            assert len(line.split()) > 0
-            objectname = line.split()[0]
-            expnum = line.split()[1]
-            RA = float(line.split()[3])   
-            DEC = float(line.split()[4])
-                        
-            vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
-            if not storage.exists(vos_dir, force=True):
-                storage.mkdir(vos_dir)
-            assert storage.exists(vos_dir, force=True)
-
-            postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, expnum, RA, DEC)
-            if storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)) == True:
-                print "  Stamp already exists"
-            else:
-                
-                urlData, date_start, date_end = query_jpl(familyname, objectname, step=1)
-                print "----- Querying JPL Horizon's ephemeris for RA and DEC uncertainties -----"
-                RA_3sigma, DEC_3sigma = parse_mag_jpl(urlData, date_start, date_end) # in arcseconds
-            
-                RA_3sigma_avg = np.mean(RA_3sigma) / 3600 # convert to degrees
-                DEC_3sigma_avg = np.mean(DEC_3sigma) / 3600
-            
-                if RA_3sigma_avg > DEC_3sigma_avg:
-                    r_temp = RA_3sigma_avg
-                else:
-                    r_temp = DEC_3sigma_avg
-                
-                if r_temp > radius:
-                    radius = r_temp
-                
-                cutout(objectname, expnum, RA, DEC, radius, username, password, familyname)
+    image_list_path = 'asteroid_families/{}/{}_images.txt'.format(familyname, familyname) # USING TEST FILE
+    table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['object', 'expnum', 'ra', 'dec'], sep=' ', dtype={'Object':object})
+    
+    for row in range(len(table)):
+        postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(table['object'][row], table['expnum'][row], table['ra'][row], table['dec'][row])
+        if storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)) == True:
+            print "  Stamp already exists"
+        else:                
+            cutout(username, password, familyname, table['object'][row], table['expnum'][row], table['ra'][row], table['dec'][row], radius=0.02)
+        
                 
 def get_one_stamp(objectname, expnum, radius, username, password, familyname):
     
@@ -115,55 +96,67 @@ def get_one_stamp(objectname, expnum, radius, username, password, familyname):
     family_dir = os.path.join(dir_path_base, familyname)
     if os.path.isdir(family_dir) == False:
         print "Invalid family name or directory does not exist"
-
+        
+    vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
+    if not storage.exists(vos_dir, force=True):
+        storage.mkdir(vos_dir)
+    
     image_list = '{}/{}_images.txt'.format(family_dir, familyname)
     with open(image_list) as infile: 
         for line in infile.readlines()[1:]: # skip header info
             assert len(line.split()) > 0
             objectname = line.split()[0]
             expnum_file = line.split()[1]
-            RA = float(line.split()[3])   
-            DEC = float(line.split()[4])
-                        
-            vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
-            if not storage.exists(vos_dir, force=True):
-                storage.mkdir(vos_dir)
-            #assert storage.exists(vos_dir, force=True)
-            
+            ra = float(line.split()[3])   
+            dec = float(line.split()[4])
+                    
             if expnum == expnum_file:
-                
-                postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, expnum, RA, DEC)
+            
+                postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, expnum, ra, dec)
                 storage.remove('vos:kawebb/postage_stamps/{}/{}'.format(familyname, postage_stamp_filename))
-                cutout(objectname, expnum, RA, DEC, radius, username, password, familyname)
-                return                
-	
-def centered_stamp(objectname, expnum,radius, RA, DEC, username, password, familyname):
+                file_path = '{}/{}_stamps/{}'.format(family_dir, familyname, postage_stamp_filename)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                cutout(username, password, familyname, objectname, expnum, ra, dec, radius)
+                return    
+    
+    '''
+    image_list_path = 'asteroid_families/{}/{}_images_test.txt'.format(familyname, familyname)
+    table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['object', 'expnum', 'ra', 'dec'], sep=' ', dtype={'object':object, 'expnum':object})
+    
+    row = table.query('(object == "{}") & (expnum == "{}")'.format(objectname, expnum))
+    
+    postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(table['object'][row], table['expnum'][row], table['ra'][row], table['dec'][row])
+    storage.remove('vos:kawebb/postage_stamps/{}/{}'.format(familyname, postage_stamp_filename))          
+    cutout(username, password, familyname, table['object'][row], table['expnum'][row], table['ra'][row], table['dec'][row], radius)              
+	'''
+def centered_stamp(username, password, familyname, objectname, expnum, ra, dec, radius):
     
     vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
-    postage_stamp_filename = "{}_{}_{:8f}_{:8f}_centered.fits".format(objectname, expnum, RA, DEC)
+    postage_stamp_filename = "{}_{}_{:8f}_{:8f}_centered.fits".format(objectname, expnum, ra, dec)
     if storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)) == True:
         print "  Stamp already exists"
     else:
-        print type(objectname, expnum, RA, DEC, radius, username, password, familyname)
-        cutout(objectname, expnum, RA, DEC, radius, username, password, familyname)
+        print type(objectname, expnum, ra, dec, radius, username, password, familyname)
+        cutout(username, password, familyname, objectname, image, ra, dec, radius)
     return
 
 
-def cutout(object_name, image, ra, dec, radius, username, password, family_name, test=False):
+def cutout(username, password, family_name, object_name, image, ra, dec, radius, test=False):
     """
     Test for image known to work   
     image = '1667879p'
-    RA = 21.1236333333
-    DEC = 11.8697277778
+    ra = 21.1236333333
+    dec = 11.8697277778
     """
-    
+
     vos_dir = 'vos:kawebb/postage_stamps/{}'.format(family_name)
     output_dir = 'asteroid_families/{}/{}_stamps'.format(family_name, family_name)
     if not os.path.isdir(output_dir):
         os.makedirs(output_dir)
 
     this_cutout = "CIRCLE ICRS {} {} {}".format(ra, dec, 2*0.18/3600.0)
-    print "cut out: {}".format(this_cutout)
+    print "  cut out: {}".format(this_cutout)
 
     expnum = image.split('p')[0]  # only want calibrated images
     target = storage.vospace.fixURI(storage.get_uri(expnum))
@@ -187,7 +180,7 @@ def cutout(object_name, image, ra, dec, radius, username, password, family_name,
         return
 
     this_cutout = "CIRCLE ICRS {} {} {}".format(ra, dec, radius)
-    print "cut out: {}".format(this_cutout)
+    print "  cut out: {}".format(this_cutout)
 
     expnum = image.split('p')[0]  # only want calibrated images
     target = storage.vospace.fixURI(storage.get_uri(expnum))
@@ -222,152 +215,7 @@ def cutout(object_name, image, ra, dec, radius, username, password, family_name,
         return
     storage.copy('{}/{}'.format(output_dir, postage_stamp_filename),
                  '{}/{}'.format(vos_dir, postage_stamp_filename))
-    
-
-def query_jpl(familyname, objectname, step=1, su='d'):
-    '''
-    Constructs a URL to query JPL Horizon's for RA and DEC uncertainties
-    '''
-    # from familyname_images.txt get date range of images for objectname
-    date_range = []
-    with open('asteroid_families/{}/{}_images.txt'.format(familyname, familyname)) as infile:
-        for line in infile.readlines()[1:]:
-            if len(line.split()) > 0:
-                if objectname == line.split()[0]:
-                    date_range.append(float(line.split()[5]))   
-
-    date_range_t = Time(date_range, format='mjd', scale='utc')
-    assert  len(date_range_t.iso) > 0
-    time_start = ((date_range_t.iso[0]).split())[0] + ' 00:00:00.0'
-    time_end = ((date_range_t.iso[-1]).split())[0] + ' 00:00:00.0'
-
-    if time_start == time_end:
-        time_end = add_day(time_end, date_range_t)
-
-    print " Date range in query: {} -- {}".format(time_start, time_end)
-
-    # change date format from 01-01-2001 00:00 to 01-Jan-2001 00:00
-    date_start = change_date(time_start)
-    date_end = change_date(time_end)
-
-    s = '36' # select parameter for RA and DEC uncertainty
-
-    # form URL pieces that Horizon needs for its processing instructions
-    urlArr = ["http://ssd.jpl.nasa.gov/horizons_batch.cgi?batch=1&COMMAND=",
-              '',
-              "&MAKE_EPHEM='YES'&TABLE_TYPE='OBSERVER'&START_TIME=",
-              '',
-              "&STOP_TIME=",
-              '',
-              "&STEP_SIZE=",
-              '',
-              "&QUANTITIES=" + s,
-              "&CSV_FORMAT='YES'"]
-          
-    # change the object name, start and end times, and time step into proper url-formatting
-    url_style_output = []
-    for obj in [objectname, time_start, time_end]:
-        os = obj.split()
-        if len(os) > 1:
-            ob = "'" + os[0] + '%20' + os[1] + "'"
-        else:
-            ob =  "'" + objectname + "'"
-        url_style_output.append(ob)
-    step = "'" + str(step) + "%20" + su + "'"
- 
-    # URL components
-    urlArr[1] = url_style_output[0]  # formatted object name
-    urlArr[3] = url_style_output[1]  # start time
-    urlArr[5] = url_style_output[2]  # end time
-    urlArr[7] = step  # timestep   
-    urlStr = "".join(urlArr)  # create the url to pass to Horizons
-   
-    # Query Horizons; if it's busy, wait and try again in a minute
-    done = 0
-    while not done:
-        urlHan = url.urlopen(urlStr)
-        urlData = urlHan.readlines()
-        urlHan.close()
-        if len(urlData[0].split()) > 1:
-            if "BUSY:" <> urlData[0].split()[1]:
-                done = 1
-            else:
-                print urlData[0],
-                print "Sleeping 60 s and trying again"
-                time.sleep(60)
-        else:
-            done = 1   
-        
-    return urlData, date_start, date_end
-
-def parse_mag_jpl(urlData, date_start, date_end):
-        
-    # parse through urlData for indexes of start and end dates    
-    index_end = None
-    index_start = None
-    for idx, line in enumerate(urlData):  #testing
-        assert line.split() > 0
-        try:
-            date_jpl = line.split()[0]+' '+(line.split()[1]).strip(',')
-            if date_start == date_jpl:
-                index_start = idx
-        except:
-            None
-    if index_start is None:
-        print "WARNING: index start could not be obtained, set to index 69"
-        index_start = 69
-    for idx, line in enumerate(urlData):  #testing
-        try:
-            date_jpl = line.split()[0]+' '+(line.split()[1]).strip(',')
-            if date_end == date_jpl:
-                index_end = idx
-        except:
-            None
-    if index_end is None:
-        print "WARNING: index end could not be obtained, set to index 70"
-        index_end = 70
-        
-    # for indexes from start to end dates, get apparent magnitude values
-    RA_3sigma = []
-    DEC_3sigma = []
-    for line in urlData[index_start:index_end+1]:
-        assert len(line.split()) > 0 
-        try:
-            RA_3sigma.append(float((line.split()[4]).strip(',')))
-            DEC_3sigma.append(float((line.split()[5]).strip(',')))
-        except:
-            print "WARNING: could not get magnitude from JPL line"
-    
-    assert len(RA_3sigma) > 0
-    return RA_3sigma, DEC_3sigma
-
-def change_date(date):
-    '''
-    Convert time format 01-01-2001 00:00:00.00 to 01-Jan-2001 00:00
-    '''
-    date_split = date.split('-')
-    date_strip = (date_split[2]).split()
-    month = int(date_split[1])
-    month_name = ['nan', 'Jan', "Feb", 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-    for i in range(0,13):
-        if i == month:
-            month_jpl = month_name[i]
-    date_new = date_split[0]+'-'+month_jpl+'-'+date_strip[0]+' 00:00'
-    
-    return date_new    
-
-def add_day(time_end, date_range_t):
-        
-    print "WARNING: only searching for one day"
-    time_end_date = (((date_range_t.iso[-1]).split())[0]).split('-')
-    day_add_one = int(time_end_date[2])+1
-    if day_add_one < 10:
-        day = '0{}'.format(day_add_one)
-    else:
-        day = day_add_one
-    time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], time_end_date[1], day)
-    
-    return time_end    
+    os.unlink('{}/{}'.format(output_dir, postage_stamp_filename))
     	
 if __name__ == '__main__':
     main()	
