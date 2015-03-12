@@ -79,7 +79,7 @@ def main():
     
     find_objects_by_phot(args.family, args.object, float(args.aperture), float(args.thresh), args.filter, args.type)
 
-def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=3.5, filtertype='r', imagetype='p'):
+def find_objects_by_phot(familyname, objectname, ap, th, filtertype='r', imagetype='p'):
     
     out_filename = '{}_r{}_t{}_output.txt'.format(familyname, aperture, thresh)
     with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'w') as outfile:
@@ -118,23 +118,28 @@ def find_objects_by_phot(familyname, objectname=None, ap=10.0, th=3.5, filtertyp
                 iterate_thru_images(familyname, objectname, expnum_list[index], ap, th, filtertype, imagetype)
 
 
-def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap=10.0, th=5.0, filtertype='r', imagetype='p'):
-    
+def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap, th, filtertype='r', imagetype='p'):
+
     success = False
     
     # initiate directories
     init_dirs(familyname, objectname)
     
-    try:
+    '''try:
         print "-- Performing photometry on image {} ".format(expnum_p)
         septable, exptime, zeropt, size, pvwcs, stamp_found, start, end = get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, filtertype, imagetype)
         if stamp_found == False:
-            print "WARNING: no stamps exist"
-            get_stamps.get_one_stamp(objectname, expnum_p, 0.02, username, password, familyname)
+            print "WARNING: Image does not exist for {} {}".format(objectname, expnum_p)
             return
-    except Exception, e:
-        print "ERROR: Error while doing photometry, {}".format(e)
+    except Exception, e:        
         return
+    '''
+    print "-- Performing photometry on image {} ".format(expnum_p)
+    septable, exptime, zeropt, size, pvwcs, stamp_found, start, end = get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, filtertype, imagetype)
+    if stamp_found == False:
+        print "WARNING: Image does not exist for {} {}".format(objectname, expnum_p)
+        return
+    
     
     try:
         print "-- Querying JPL Horizon's ephemeris"
@@ -145,7 +150,7 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
         raise
     
     table = append_table(septable, pvwcs, zeropt)
-    transients, num_cat_objs = compare_to_catalogue(table, pvwcs)
+    transients, catalogue, num_cat_objs = compare_to_catalogue(table, pvwcs)
     
     r_new, r_old, enough = check_num_stars(num_cat_objs, size, objectname, expnum_p, username, password, familyname)
     if enough == False:
@@ -182,7 +187,7 @@ def iterate_thru_images(familyname, objectname, expnum_p, username, password, ap
     print_output(familyname, objectname, expnum_p, good_neighbours, ap, th)
     
     if len(good_neighbours) == 1:
-        involved = check_involvement(good_neighbours, table, r_err)
+        involved = check_involvement(good_neighbours, catalogue, r_err, pvwcs)
         if involved == False:
             print '-- Cutting out recentered postage stamp'
             #cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, r_old, username, password)
@@ -200,11 +205,12 @@ def get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, 
             expnum_file = file.split('_')[1]
             if (expnum_file == expnum_p) and (objectname_file == objectname):
                 stamp_found = True
+                print 'stamp found'
                 file_path = '{}/{}'.format(stamps_dir, file)
                 storage.copy('{}/{}'.format(vos_dir, file), file_path)
                 try:
                     with fits.open('{}/{}'.format(stamps_dir, file)) as hdulist:
-                        #print hdulist.info()
+                        print hdulist.info()
                         
                         if hdulist[0].data is None:
                             print 'IMAGE is mosaic'
@@ -230,7 +236,7 @@ def get_fits_data(familyname, objectname, expnum_p, username, password, ap, th, 
                 
                 except Exception, e:
                     print 'ERROR: {} xxxxxxxxxxx'.format(e)
-                    get_stamps.get_one_stamp(objectname, expnum_p, 0.03, username, password, familyname)
+                    #get_stamps.get_one_stamp(objectname, expnum_p, 0.03, username, password, familyname)
                     raise
                 
                 os.unlink('{}/{}'.format(stamps_dir, file))
@@ -460,20 +466,16 @@ def compare_to_catalogue(table, pvwcs):
     #convert sep table elements from pixels to WCS
     septable = pd.DataFrame(np.array(table))
     
-    Eall = pd.read_table('catalogue/Eall.photcat', usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag'], sep='      |     |    |   |  ', engine='python')
-    Hall = pd.read_table('catalogue/Hall.photcat', usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag'], sep='      |     |    |   |  ', engine='python')
-    Lall = pd.read_table('catalogue/Lall.photcat', usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag'], sep='      |     |    |   |  ', engine='python')
-    Oall = pd.read_table('catalogue/Oall.photcat', usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag'], sep='      |     |    |   |  ', engine='python')
-    catalogue = pd.concat([Eall, Hall, Lall, Oall])
+    blocks = ['Hall', 'Lall', 'Oall'] # starting from the second block
+    catalogue = pd.read_table('catalogue/Eall.photcat', usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag'], sep='      |     |    |   |  ', engine='python')
+    for block in blocks:
+        temp_table = pd.read_table('catalogue/{}.photcat'.format(block), usecols=[0, 1, 4], header=0, names=['ra', 'dec', 'mag'], sep='      |     |    |   |  ', engine='python')
+        catalogue = pd.concat([catalogue, temp_table])
+        
     catalogue.reset_index(drop=True, inplace=True)
     
-    #pos1 = septable.as_matrix(columns=['ra', 'dec'])
-    #pos2 = catalogue.as_matrix(columns=['ra', 'dec'])
-    #match1, match2 = match_lists(pos1, pos2, tolerance=0.005111111)
-    #print match1, match2
-    
     sep_tol = 5 * 0.184 / 3600 # pixels to degrees
-    mag_tol = 0.2
+    mag_tol = 1
     
     cat_objs = 0
     trans_ra = []
@@ -508,7 +510,7 @@ def compare_to_catalogue(table, pvwcs):
         print "WARNING: No transients identified"
     
     transients = Table([trans_x, trans_y, trans_a, trans_b, trans_ra ,trans_dec, trans_mag, trans_flux, trans_theta], names=['x', 'y', 'a', 'b', 'ra', 'dec', 'mag', 'flux', 'theta'])
-    return transients, cat_objs
+    return transients, catalogue, cat_objs
 
 def find_neighbours(transients, pvwcs, r_sig, pRA, pDEC, expnum_p, objectname):
     
@@ -526,9 +528,7 @@ def find_neighbours(transients, pvwcs, r_sig, pRA, pDEC, expnum_p, objectname):
             print 'WARNING: No nearest neighbours were found within {} ++++++++++++++++++++++'.format(r_sig*1.5)
             ascii.write(transients, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum_p))
             with open('asteroid_families/all/no_object_found.txt', 'a') as infile:
-                infile.write(transients, 'asteroid_families/no_object_found/{}_phot.txt'.format(expnum_p))
-            
-            ascii.write('{}\t{}\n'.format(objectname, expnum_p))
+                infile.write('{}\t{}\n'.format(objectname, expnum_p))
             found = False
     
     return i_list, found
@@ -559,7 +559,7 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
     err = 40.0
     print '>> Error allowance is set to {} percent'.format(err)
     
-    print '>> RA_dot: {}, DEC_dot: {}, exptime: {}'.format(ra_dot, dec_dot, exptime)
+    print '>> RA_dot: {:.2f}, DEC_dot: {:.2f}, exptime: {:.1f}'.format(ra_dot, dec_dot, exptime)
     
     f_pix = ( (ra_dot/2)**2 + (dec_dot/2)**2 )**0.5 * (exptime/(3600 * 0.184))
     f_pix_err = (err/100) * 0.5 * ( abs(ra_dot) + abs(dec_dot) ) * (exptime/(3600 * 0.184))
@@ -673,14 +673,10 @@ def iden_good_neighbours(expnum, i_list, septable, zeropt, mag_list_jpl, ra_dot,
     else:
         return good_neighbours, f_pix_err
 
-def check_involvement(objectdata, septable, r_err):
+def check_involvement(objectdata, catalogue, r_err, pvwcs):
     '''
     Determine whether two objects are involved (ie overlapping psf's)
     '''
-    
-    tree = cKDTree(zip((np.array(septable['x'])).ravel(), (np.array(septable['y'])).ravel()))
-    search_r = 50
-    i_list = tree.query_ball_point([objectdata['x'][0], objectdata['y'][0]], search_r)
     
     # polygon of identified asteroid
     print '>> Selects first object in good_neighbours to make polygon from'
@@ -689,6 +685,8 @@ def check_involvement(objectdata, septable, r_err):
     th = objectdata['theta'][0]
     x = objectdata['x'][0]
     y = objectdata['y'][0]
+    ra = objectdata['ra'][0]
+    dec = objectdata['dec'][0]
     a_x = a*math.cos(th)
     a_y = a*math.sin(th)
     b_x = b*math.sin(th)
@@ -699,14 +697,29 @@ def check_involvement(objectdata, septable, r_err):
     p3 = (x+a_x-b_x, y+a_y-b_y)
     p4 = (x-a_x-b_x, y-a_y-b_y)
     
-    print '>> Asteroid boundary points: {} {} {} {}'.format(p1, p2, p3, p4)
+    print '>> Asteroid boundary points: ({:.1f}, {:.1f}) ({:.1f}, {:.1f}) ({:.1f}, {:.1f}) ({:.1f}, {:.1f})'.format(
+                                        p1[0], p1[1], p2[0], p2[1], p3[0], p3[1], p4[0], p4[1])
     
-    polygon = Polygon([p1, p2, p3, p4])
+    polygon = Polygon([p1, p2, p3, p4]).buffer(5)
+    min_x, min_y, max_x, max_y = polygon.bounds
+    min_ra, min_dec = pvwcs.xy2sky(min_x, min_y)
+    max_ra, max_dec = pvwcs.xy2sky(max_x, max_y)
     
-    involved = False
-    if len(i_list) > 1:
+    ra_range = abs(min_ra - max_ra)
+    dec_range = abs(min_dec - max_dec)
+    
+    cat_list = catalogue.query('({} < ra < {}) & ({} < dec < {})'.format(ra-ra_range, ra+ra_range, dec-dec_range, dec+dec_range))
+    if len(cat_list) > 0:
+        print "  Object is involved <<<<<<<<<<<<<<<<<<<"
+        print cat_list
+    else: 
+        print '  Object is not involved'
+    
+    
+    '''involved = False
+    if len(cat_list) > 1:
         print '>> Objects within {} pixels of identified asteroid (inc. ast.): {}'.format(search_r, i_list)
-        for i in i_list:
+        for cat_obj in i_list:
             x1 = septable['x'][i]
             y1 = septable['y'][i]
             a1 = septable['a'][i]+5
@@ -729,13 +742,14 @@ def check_involvement(objectdata, septable, r_err):
     else:
         print 'No other objects within {} pixels of identified asteroid'.format(search_r)
     if involved == False:
-        print '  Object is not involved.'
+        print '  Object is not involved.
+    '''
 
 def check_num_stars(num_objs, size, objectname, expnum_p, username, password, familyname):
     
     enough = True
     r_old = size * 0.184 / 3600
-    r_new = r_old + 0.005
+    r_new = r_old + 0.03
     
     print '  Number of objects in image: {}'.format(num_objs)
     if 0 < num_objs <= 10:
@@ -744,9 +758,9 @@ def check_num_stars(num_objs, size, objectname, expnum_p, username, password, fa
         print '  Not enough stars in the stamp <<<<<<<<<<<<<<<<<<<'
         get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
     if 10 < num_objs < 30:
-        r_new = r_old + 0.01
         enough = False
         print '  Not enough stars in the stamp <<<<<<<<<<<<<<<<<<<'
+        print r_old, r_new
         get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
     
     return r_new, r_old, enough
