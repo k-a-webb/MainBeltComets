@@ -50,24 +50,27 @@ def main():
                     help='threshold value.')
     parser.add_argument("--object", '-obj',
                     action='store',
-                    default='54286',
+                    default=None,
                     help='the object to preform photometry on')
                             
     args = parser.parse_args()
 
-    do_all_things(args.family, args.object, args.filter, args.type, args.radius, args.aperture, args.thresh)
+    do_all_things(args.family, args.object, args.filter, args.type, float(args.radius), float(args.aperture), float(args.thresh))
 
-def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', radius=0.02, aperture=10.0, thresh=5.0):
+def do_all_things(familyname, objectname, filtertype, imagetype, radius, aperture, thresh):
    
+    # get CADC authentification
     username = raw_input("CADC username: ")
     password = getpass.getpass("CADC password: ")
     
+    # establish input/output
     family_list_path = 'asteroid_families/{}/{}_family.txt'.format(familyname, familyname)
     vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
     assert storage.exists(vos_dir)
     image_list_path = 'asteroid_families/{}/{}_images_test.txt'.format(familyname, familyname) # USING TEST FILE
     print "WARNING: USING A TEST FILE ***************************************************************" 
     
+    # get list of all objects in a family
     if  os.path.exists(family_list_path):
         with open(family_list_path) as infile:
             filestr = infile.read()
@@ -75,19 +78,24 @@ def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', ra
     else:    
         all_object_list = find_family_members(familyname)
     
+    '''
+    # initiate output file
     out_filename = '{}_r{}_t{}_output.txt'.format(familyname, aperture, thresh)
     with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'w') as outfile:
         outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('Object', "Image", 'RA', 'DEC', 'flux', 'mag', 'x', 'y'))
-        
+    '''
+    
+    # for each image of each object, make cutout and go to sep_phot
     if  os.path.exists(image_list_path):  
-        table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['Object', 'Image', 'RA', 'DEC'], sep=' ', dtype={'Object':object})
-        for row in range(1,10):#len(table)):
+        table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['Object', 'Image', 'RA', 'DEC'], sep=' ', dtype={'Object':object, 'Image':object})
+        for row in range(12,len(table)):
             print '\n----- Searching for {} {} -----'.format(table['Object'][row], table['Image'][row])
             
             postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(table['Object'][row], table['Image'][row], table['RA'][row], table['DEC'][row])
             if storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)) == False:
-                cutout(table['Object'][row], table['Image'][row], table['RA'][row], table['DEC'][row], radius, username, password, familyname)
-            
+                print '-- Cutout not found, creating new cutout'
+                cutout(username, password, familyname, table['Object'][row], table['Image'][row], table['RA'][row], table['DEC'][row], radius)
+
             assert storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)) == True
             success = False
             attempts = 0
@@ -96,8 +104,6 @@ def do_all_things(familyname, objectname=None, filtertype='r', imagetype='p', ra
                 attempts += 1
                 if attempts == 3:
                     print ' >>>> Last attempt'
-                print '\n'
-            #success = iterate_thru_images(familyname, str(table['Object'][row]), table['Image'][row], username, password, aperture, thresh, filtertype, imagetype)
                 
     else:  
         go_the_long_way(familyname, filtertype, imagetype)
