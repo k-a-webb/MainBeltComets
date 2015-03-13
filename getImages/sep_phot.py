@@ -18,6 +18,7 @@ from astropy.coordinates import SkyCoord
 from ossos_scripts import storage
 import ossos_scripts.wcs as wcs
 from ossos_scripts.storage import exists
+from ossos_scripts.horizons import batch
 
 from get_images import get_image_info
 import get_stamps
@@ -33,6 +34,7 @@ _ERR_ELL_RAD = 15  # default radius of the error ellipse
 _MAG_ERR = 2  # default min range of magnitude from predicted by JPL
 _CAT_r_TOL = 5 * 0.184 / 3600  # Tolerance for error in RA DEC position from Stephens catalogue [pixels to degrees]
 _CAT_mag_TOL = 1  # Tolerance for error in measured magnitude from Stephens catalogue
+_F_ERR = 40.0  # Tolerance for error in calculation focal length
 
 '''
 Preforms photometry on .fits files given an input of family name and object name
@@ -93,8 +95,8 @@ def find_objects_by_phot(family_name, object_name, ap, th, filter_type='r', imag
 
     out_filename = '{}_r{}_t{}_output.txt'.format(family_name, ap, th)
     with open('{}/{}'.format(stamps_dir, out_filename), 'w') as outfile:
-        outfile.write(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('Object', "Image", 'RA', 'DEC', 'flux', 'mag', 'x', 'y'))
+        outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(
+            'Object', "Image", 'RA', 'DEC', 'flux', 'mag', 'x', 'y', 'consistent_f', 'consistent_m'))
 
     # initiate directories
     init_dirs(family_name)
@@ -175,7 +177,8 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
     try:
         good_neighbours, r_err = iden_good_neighbours(expnum_p, i_list, transients, mag_list_jpl,
                                                       ra_dot, dec_dot, exptime)
-        print good_neighbours
+        if good_neighbours is None:
+            return
 
         if len(good_neighbours) == 1:
             involved = check_involvement(good_neighbours, catalogue, r_err, pvwcs)
@@ -337,7 +340,9 @@ def get_mag_rad(family_name, object_name):
 
     # print " Date range in query: {} -- {}".format(time_start, time_end)
 
-    ephemerides = query_jpl(object_name, time_start, time_end, params=[9, 36], step=1)
+    # output = batch("Haumea", "2010-12-28 10:00", "2010-12-29 10:00", 1, su='d')
+    orbital_elements, ephemerides = batch(object_name, time_start, time_end, step=1, su='d', params=[9, 36])
+    # ephemerides = query_jpl(object_name, time_start, time_end, params=[9, 36], step=1)
 
     mag_list = np.array(ephemerides.icol(2))
     ra_sig = np.mean(np.mean(ephemerides.icol(3)))
@@ -364,7 +369,8 @@ def get_coords(object_name, time_start, time_end):
     if type(object_name) is not str:
         object_name = str(object_name)
 
-    ephemerides = query_jpl(object_name, time_start, time_end, params=[1, 3], step='1', su='m')
+    orbital_elements, ephemerides = batch(object_name, time_start, time_end, step=1, su='m', params=[1, 3])
+    # ephemerides = query_jpl(object_name, time_start, time_end, params=[1, 3], step='1', su='m')
 
     mid = int(len(ephemerides) / 2)
     ra = ephemerides['R.A._(ICRF/J2000.0)'][mid]
@@ -481,17 +487,20 @@ def append_table(table, pvwcs, zeropt):
     ra_list = []
     dec_list = []
     mag_sep_list = []
+    f_list = []
     for row in range(len(table)):
         try:
             ra, dec = pvwcs.xy2sky(table['x'][row], table['y'][row])
             ra_list.append(ra)
             dec_list.append(dec)
             mag_sep_list.append(-2.5 * math.log10(table['flux'][row]) + zeropt)
+            f_list.append((table['a'][row] * table['a'][row] - table['b'][row] * table['b'][row]) ** 0.5)
         except Exception, e:
             print 'Error: {} row {}'.format(e, row)
     table['ra'] = ra_list
     table['dec'] = dec_list
     table['mag'] = mag_sep_list
+    table['f'] = f_list
     return table
 
 
@@ -599,17 +608,66 @@ def iden_good_neighbours(expnum, i_list, septable, mag_list_jpl, ra_dot, dec_dot
         Calculates eccentricity, passes if greater than minimum value that is inputted
     """
 
-    # calculate theoretical focal length
-    err = 40.0
-    print '>> Error allowance is set to {} percent'.format(err)
+    # Set theoretical magnitude as mean of range with uncertainty of _MAG_ERR or magnitude variance
+    mean = np.mean(mag_list_jpl)
+    maxmag = np.amax(mag_list_jpl)
+    minmag = np.amin(mag_list_jpl)
+    if _MAG_ERR > maxmag - minmag:
+        magrange = _MAG_ERR
+    else:
+        magrange = maxmag - minmag
 
+    # calculate theoretical focal length
+    print '>> Error allowance is set to {} percent'.format(_F_ERR)
+    print '>> RA_dot: {:.2f}, DEC_dot: {:.2f}, exptime: {:.1f}'.format(ra_dot, dec_dot, exptime)
+    f_pix = ((ra_dot / 2) ** 2 + (dec_dot / 2) ** 2) ** 0.5 * (exptime / (3600 * 0.184))
+    f_pix_err = (_F_ERR / 100) * 0.5 * (abs(ra_dot) + abs(dec_dot)) * (exptime / (3600 * 0.184))
+    assert f_pix_err != 0
+
+    i_table = septable.irow(i_list)
+
+    both_cond = i_table.query('({} < f < {}) & ({} < mag < {})'.format(f_pix - f_pix_err, f_pix + f_pix_err,
+                                                                       mean - magrange, mean + magrange))
+    only_f_cond = i_table.query('{} < f < {}'.format(f_pix - f_pix_err, f_pix + f_pix_err))
+    only_mag_cond = i_table.query('{} < mag < {}'.format(mean - magrange, mean + magrange))
+
+    if len(both_cond) > 0:
+        print '>> Both conditions met by:'
+        print both_cond
+        return both_cond, f_pix_err
+    elif len(only_f_cond) > 0:
+        print '>> Elongation is consistent, magnitude is not:'
+        print only_f_cond
+        return only_f_cond, f_pix_err
+    elif len(only_mag_cond) > 0:
+        print '>> Magnitude is consistent, elongation is not:'
+        print only_mag_cond
+        return only_mag_cond, f_pix_err
+    else:
+        print "WARNING: No condition could not be satisfied <<<<<<<<<<<<<<<<<<<<<<<<<<<<"
+        print '  Nearest neighbours:'
+        print i_table
+        print "  Mag mean, accepted error: {:.2f} {:.2f}".format(mean, magrange)
+        ascii.write(septable, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum))
+        return i_table, f_pix_err
+
+
+def iden_good_neighbours0(expnum, i_list, septable, mag_list_jpl, ra_dot, dec_dot, exptime):
+    """
+    Selects nearest neighbour object from predicted coordinates as object of interest
+    In order:
+        Compares measured apparent magnitude to predicted, passes if in range of values
+        Calculates eccentricity, passes if greater than minimum value that is inputted
+    """
+
+    # calculate theoretical focal length
+    print '>> Error allowance is set to {} percent'.format(_F_ERR)
     print '>> RA_dot: {:.2f}, DEC_dot: {:.2f}, exptime: {:.1f}'.format(ra_dot, dec_dot, exptime)
 
     f_pix = ((ra_dot / 2) ** 2 + (dec_dot / 2) ** 2) ** 0.5 * (exptime / (3600 * 0.184))
-    f_pix_err = (err / 100) * 0.5 * (abs(ra_dot) + abs(dec_dot)) * (exptime / (3600 * 0.184))
+    f_pix_err = (_F_ERR / 100) * 0.5 * (abs(ra_dot) + abs(dec_dot)) * (exptime / (3600 * 0.184))
     assert f_pix_err != 0
 
-    m_x = None
     mag_sep_list = []
     index_list = []
     m_x_list = []
@@ -620,6 +678,10 @@ def iden_good_neighbours(expnum, i_list, septable, mag_list_jpl, ra_dot, dec_dot
     a_list = []
     b_list = []
     flux_list = []
+    f_list = []
+
+    elong_cond = []
+    mag_cond = []
 
     mean = np.mean(mag_list_jpl)
     maxmag = np.amax(mag_list_jpl)
@@ -660,8 +722,10 @@ def iden_good_neighbours(expnum, i_list, septable, mag_list_jpl, ra_dot, dec_dot
                 theta_list.append(septable['theta'][i])
                 a_list.append(septable['a'][i])
                 b_list.append(septable['b'][i])
+                f_list.append(f)
 
-                print '  Measured values (f, a, b) for index {}: {:.2f}, {:.2f} {:.2f}'.format(i, f, a, b)
+                mag_cond.append('yes')
+                elong_cond.append('yes')
 
             elif abs(f - f_pix) < f_pix_err:
                 m_x = septable['x'][i]
@@ -677,10 +741,10 @@ def iden_good_neighbours(expnum, i_list, septable, mag_list_jpl, ra_dot, dec_dot
                 theta_list.append(septable['theta'][i])
                 a_list.append(septable['a'][i])
                 b_list.append(septable['b'][i])
+                f_list.append(f)
 
-                print '  Measured values (f, a, b) for index {}: {:.2f}, {:.2f} {:.2f}'.format(i, f, a, b)
-
-                print "WARNING: Magnitude is outside range for index {}".format(i)
+                mag_cond.append('no')
+                elong_cond.append('yes')
 
             elif abs(mag_sep - mean) < magrange:
                 m_x = septable['x'][i]
@@ -696,26 +760,50 @@ def iden_good_neighbours(expnum, i_list, septable, mag_list_jpl, ra_dot, dec_dot
                 theta_list.append(septable['theta'][i])
                 a_list.append(septable['a'][i])
                 b_list.append(septable['b'][i])
+                f_list.append(f)
 
-                print '  Measured values (f, a, b) for index {}: {:.2f}, {:.2f} {:.2f}'.format(i, f, a, b)
-                print "WARNING: Ellipticity is outside range for index {}: {:.2f}".format(i, f)
+                mag_cond.append('yes')
+                elong_cond.append('no')
 
-    good_neighbours = Table(
-        [m_x_list, m_y_list, ra_list, dec_list, mag_sep_list, flux_list, a_list, b_list, theta_list],
-        names=('x', 'y', 'ra', 'dec', 'mag', 'flux', 'a', 'b', 'theta'))
+    good_neighbours = pd.DataFrame({'x': m_x_list,
+                                    'y': m_y_list,
+                                    'ra': ra_list,
+                                    'dec': dec_list,
+                                    'mag': mag_sep_list,
+                                    'flux': flux_list,
+                                    'a': a_list,
+                                    'b': b_list,
+                                    'theta': theta_list,
+                                    'f': f_list,
+                                    'consistent_f': elong_cond,
+                                    'consistent_mag': mag_cond
+                                    })
 
     if not something_good:
         print "WARNING: Flux of nearest neighbours measured to be 0.0"
         return
 
-    if m_x is None:
+    both_cond = good_neighbours.query('consistent_f == "yes" and consistent_mag == "yes"')
+    e_cond = good_neighbours.query('consistent_f == "yes" and consistent_mag == "no"')
+    m_cond = good_neighbours.query('consistent_f == "no" and consistent_mag == "yes"')
+
+    if len(both_cond) > 0:
+        print '>> Both conditions met by:'
+        print both_cond
+        return both_cond, f_pix_err
+    elif len(e_cond) > 0:
+        print '>> Elongation is consistent, magnitude is not:'
+        print e_cond
+        return e_cond, f_pix_err
+    elif len(m_cond) > 0:
+        print '>> Magnitude is consistent, elongation is not:'
+        print m_cond
+        return m_cond, f_pix_err
+    else:
         print "WARNING: No condition could not be satisfied <<<<<<<<<<<<<<<<<<<<<<<<<<<<"
         print '  Nearest neighbour list: {}'.format(i_list)
-        print "  Mag mean, accepted error, and fitting mags: {:.2f} {:.2f}".format(mean, magrange)
+        print "  Mag mean, accepted error: {:.2f} {:.2f}".format(mean, magrange)
         ascii.write(septable, 'asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum))
-        return
-
-    else:
         return good_neighbours, f_pix_err
 
 
@@ -828,9 +916,10 @@ def print_output(family_name, object_name, expnum_p, object_data, ap, th, num_ob
             try:
                 for i in range(0, len(object_data)):
                     # good_neighbours = 'x', 'y', 'ra', 'dec', 'mag', 'flux', 'a', 'b', 'theta'
-                    outfile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
+                    outfile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
                         object_name, expnum_p, object_data['ra'][i], object_data['dec'][i], object_data['flux'][i],
-                        object_data['mag'][i], object_data['x'][i], object_data['y'][i], num_objs))
+                        object_data['mag'][i], object_data['x'][i], object_data['y'][i], num_objs,
+                        object_data['consistent_f'][i], object_data['consistent_mag'][i]))
             except Exception, e:
                 print "ERROR: cannot write to outfile {} <<<<<<<<<<<<".format(e)
 
