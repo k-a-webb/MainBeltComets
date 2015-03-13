@@ -119,8 +119,10 @@ def parse_metadata(familyname):
         data_table = pd.read_table('asteroid_families/{}/{}_metadata.txt'.format(familyname, familyname))
     else:
         data_table = get_metadata(familyname)
+        
+    print data_table.sort('occurance')
       
-    frequency = []    
+    '''frequency = []    
     for i in range(1, 34):
         occ = data_table.query('occurance == {}'.format(i))
         frequency.append(float(len(occ)))
@@ -132,6 +134,7 @@ def parse_metadata(familyname):
         plt.ylabel('Number of asteroids')
         plt.xlabel('Observation occurance')
         plt.show()
+   '''
     
 if __name__ == '__main__':
     main()                
