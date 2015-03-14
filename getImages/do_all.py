@@ -1,14 +1,14 @@
 import argparse
 import os
 import getpass
-import pandas as pd
 
-from find_family import find_family_members
-from find_family import get_all_families_list
 from get_images import get_image_info
-from get_stamps import get_stamps, cutout
+from get_stamps import cutout
 from sep_phot import iterate_thru_images
 from ossos_scripts import storage
+
+import pandas as pd
+
 
 _LOCALPATH = 'asteroid_families/all/all_stamps'
 
@@ -76,8 +76,9 @@ def do_all_things(familyname, filtertype, imagetype, radius, aperture, thresh):
     '''
     # initiate output file
     out_filename = '{}_r{}_t{}_output.txt'.format(familyname, aperture, thresh)
-    with open('asteroid_families/{}/{}_stamps/{}'.format(familyname, familyname, out_filename), 'w') as outfile:
-        outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('Object', "Image", 'RA', 'DEC', 'flux', 'mag', 'x', 'y'))
+    with open('asteroid_families/{}/phot_output/{}'.format(familyname, familyname, out_filename), 'w') as outfile:
+        outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(
+        'object', 'expnum', 'ra', 'dec', 'flux', 'mag', 'x', 'y', 'stars', 'time', 'consistent_f', 'consistent_mag'))
     '''
 
     # Remove any fits files hanging around from failed run
@@ -95,7 +96,7 @@ def do_all_things(familyname, filtertype, imagetype, radius, aperture, thresh):
         table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['Object', 'Image', 'RA', 'DEC'],
                               sep=' ', dtype={'Object': object, 'Image': object})
 
-        for row in range(11, 18):  # len(table)):
+        for row in range(27, len(table)):
             print '\n{} --- Searching for {} in exposure {} -----'.format(row, table['Object'][row],
                                                                           table['Image'][row])
             expnum = (table['Image'][row]).strip('{}'.format(imagetype))
@@ -125,10 +126,10 @@ def do_all_things(familyname, filtertype, imagetype, radius, aperture, thresh):
                     print '\n'
 
     else:
-        go_the_long_way(familyname, filtertype, imagetype)
+        go_the_long_way(familyname, radius, filtertype, imagetype, username, password)
 
 
-def go_the_long_way(familyname, filtertype, imagetype):
+def go_the_long_way(familyname, radius, filtertype, imagetype, username, password):
     image_list, expnum_list, ra_list, dec_list = get_image_info(familyname, filtertype, imagetype)
 
     for index, objectname in enumerate(image_list):
@@ -144,6 +145,9 @@ def go_the_long_way(familyname, filtertype, imagetype):
             cutout(objectname, expnum_list[index], ra_list[index], dec_list[index], radius, username, password,
                    familyname)
 
+        '''
+        VVV currently does not work, obviously VVV
+        '''
         success = False
         attempts = 0
         while (success is False) and (attempts < 3):
