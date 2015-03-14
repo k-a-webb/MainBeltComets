@@ -18,7 +18,7 @@ from ossos_scripts import util
 
 _TARGET = "TARGET"
 _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
-dir_path_base = '{}/asteroid_families'.format(dir_path)
+dir_path_base = '{}/asteroid_families'.format(_DIR_PATH_BASE)
 
 BASEURL = "http://www.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/vospace/auth/synctrans"
 
@@ -134,12 +134,15 @@ def centered_stamp(username, password, familyname, object_name, expnum, ra, dec,
 
 
 def cutout(username, password, family_name, object_name, image, ra, dec, radius, test=False):
+
     """
     Test for image known to work   
     image = '1667879p'
     ra = 21.1236333333
     dec = 11.8697277778
     """
+
+    init_dirs(family_name)
 
     output_dir = 'asteroid_families/{}/{}_stamps'.format(family_name, family_name)
     if not os.path.isdir(output_dir):
@@ -209,6 +212,7 @@ def cutout(username, password, family_name, object_name, image, ra, dec, radius,
 
 
 def init_dirs(familyname):
+
     global family_dir
     family_dir = os.path.join(dir_path_base, familyname)
     if not os.path.isdir(family_dir):
