@@ -22,8 +22,10 @@ import get_stamps
 
 client = vos.Client()
 _VOS_PATH = 'vos:kawebb/postage_stamps'
+vos_dir = '{}/all'.format(_VOS_PATH)
 _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
 _DIR_PATH = '{}/asteroid_families'.format(_DIR_PATH_BASE)
+stamps_dir = '{}/all/all_stamps'.format(_DIR_PATH)
 
 _RADIUS = 0.03  # default radius of cutout
 _ERR_ELL_RAD = 15  # default radius of the error ellipse
@@ -61,7 +63,7 @@ def main():
                         help='aperture (degree) of circle for photometry.')
     parser.add_argument("--thresh", '-t',
                         action='store',
-                        default=3.5,
+                        default=3.,
                         help='threshold value for photometry (sigma above background).')
     parser.add_argument("--object", '-o',
                         action='store',
@@ -140,21 +142,14 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
 
     try:
         print "-- Performing photometry on image {} ".format(expnum_p)
-        septable, exptime, zeropt, size, pvwcs, stamp_found, start, end, size_x, size_y = get_fits_data(object_name,
-                                                                                                        expnum_p,
-                                                                                                        username,
-                                                                                                        password,
-                                                                                                        ap,
-                                                                                                        th,
-                                                                                                        filtertype,
-                                                                                                        imagetype)
-        if not stamp_found:
-            print "WARNING: Image does not exist for {} {}".format(object_name, expnum_p)
-            return
+        septable, exptime, zeropt, size, pvwcs, start, end, size_x, size_y = \
+            get_fits_data(object_name, expnum_p, ap, th)
+
+
     except Exception, e:
         print 'ERROR: {}'.format(e)
-        write_to_error_file2(object_name, expnum_p, out_filename='{}/phot_err.txt'.format(output_dir))
-        return
+        write_to_error_file2(object_name, expnum_p, out_filename='phot_err.txt')
+        return success
 
     try:
         print "-- Querying JPL Horizon's ephemeris"
@@ -167,8 +162,8 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
     table = append_table(septable, pvwcs, zeropt)
     transients, catalogue, num_cat_objs = compare_to_catalogue(table)
     r_new, r_old, enough = check_num_stars(num_cat_objs, size, object_name, expnum_p, username, password, family_name)
-    # if not enough:
-    # return
+    if not enough:
+        return success
 
     print '-- Identifying object from nearest neighbours within {} pixels'.format(r_sig)
     i_list, found = find_neighbours(transients, pvwcs, r_sig, p_ra, p_dec, expnum_p, object_name)
@@ -205,20 +200,24 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
     return success
 
 
-def get_fits_data(object_name, expnum_p, username, password, ap, th, filter_type, image_type):
+def get_fits_data(object_name, expnum_p, ap, th):
     """
     Finds image in VOSpace, determines number of extensions, inputs parameters aperture and threshold into the photometry method,
     returns photometry measurements and header values
     """
 
+
+
     stamp_found = False  # if stamps not found, returns to do_all to try again
+    assert storage.exists(vos_dir)
     for fits_file in client.listdir(vos_dir):  # images named with convention: object_expnum_RA_DEC.fits
 
-        if fits_file.endswith('.fits'):
+         if fits_file.endswith('.fits'):
             objectname_file = fits_file.split('_')[0]
             expnum_file = fits_file.split('_')[1]
 
             if (expnum_file == expnum_p) and (objectname_file == object_name):
+                print '>> File found: {}'.format(fits_file)
                 stamp_found = True
                 file_path = '{}/{}'.format(stamps_dir, fits_file)
                 storage.copy('{}/{}'.format(vos_dir, fits_file), file_path)
@@ -251,7 +250,6 @@ def get_fits_data(object_name, expnum_p, username, password, ap, th, filter_type
 
                 except Exception, e:
                     print 'ERROR: {} xxxxxxxxxxx'.format(e)
-                    # get_stamps.get_one_stamp(familyname, objectname, expnum_p, good_neighbours, _RADIUS, username, password)
                     raise
 
                 os.unlink('{}/{}'.format(stamps_dir, fits_file))
@@ -267,8 +265,11 @@ def get_fits_data(object_name, expnum_p, username, password, ap, th, filter_type
                 else:
                     size = size_y
 
-                return table, exptime, zeropt, size, pvwcs, stamp_found, start, end, size_x, size_y
+                return table, exptime, zeropt, size, pvwcs, start, end, size_x, size_y
 
+    if not stamp_found:
+            print "WARNING: Image does not exist for {} {}".format(object_name, expnum_p)
+            return
 
 def sep_phot(data, ap, th):
     """
@@ -276,14 +277,11 @@ def sep_phot(data, ap, th):
     """
 
     # Measure a spatially variable background of some image data (np array)
-    '''
     try:
         bkg = sep.Background(data)  # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
-    except Exception, e:
+    except ValueError, e:
         data = data.byteswap(True).newbyteorder()
         bkg = sep.Background(data)  # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
-    '''
-    bkg = sep.Background(data)  # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
 
     # Directly subtract the background from the data in place
     bkg.subfrom(data)
@@ -357,7 +355,7 @@ def get_mag_rad(family_name, object_name):
     ra_sig = np.mean(np.mean(ephemerides.icol(3)))
     dec_sig = np.mean(np.mean(ephemerides.icol(4)))
 
-    print '>> RA and DEC 3sigma error: {:.2f} {:.2f}'.format(ra_sig / 0.184, dec_sig / 0.184)
+    # print '>> RA and DEC 3sigma error: {:.2f} {:.2f}'.format(ra_sig / 0.184, dec_sig / 0.184)
 
     if ra_sig > dec_sig:
         r_sig = ra_sig / 0.184
@@ -489,7 +487,7 @@ def find_neighbours(transients, pvwcs, r_sig, p_ra, p_dec, expnum_p, object_name
         if len(i_list) == 0:
             print 'WARNING: No nearest neighbours were found within {} ++++++++++++++++++++++'.format(r_sig * 1.5)
             transients.to_csv('asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum_p), sep='\t')
-            with open('asteroid_families/all/no_object_found.txt', 'a') as infile:
+            with open('{}/no_object_found.txt'.format(output_dir), 'a') as infile:
                 infile.write('{}\t{}\n'.format(object_name, expnum_p))
             found = False
 
@@ -529,8 +527,8 @@ def iden_good_neighbours(expnum, i_list, septable, mag_list_jpl, ra_dot, dec_dot
         magrange = maxmag - minmag
 
     # calculate theoretical focal length
-    print '>> Error allowance is set to {} percent'.format(_F_ERR)
-    print '>> RA_dot: {:.2f}, DEC_dot: {:.2f}, exptime: {:.1f}'.format(ra_dot, dec_dot, exptime)
+    # print '>> Error allowance is set to {} percent'.format(_F_ERR)
+    # print '>> RA_dot: {:.2f}, DEC_dot: {:.2f}, exptime: {:.1f}'.format(ra_dot, dec_dot, exptime)
     f_pix = ((ra_dot / 2) ** 2 + (dec_dot / 2) ** 2) ** 0.5 * (exptime / (3600 * 0.184))
     f_pix_err = (_F_ERR / 100) * 0.5 * (abs(ra_dot) + abs(dec_dot)) * (exptime / (3600 * 0.184))
     assert f_pix_err != 0
@@ -605,7 +603,7 @@ def check_involvement(object_data, catalogue, r_err, pvwcs, size_x, size_y):
     """
     object_data.reset_index(drop=True, inplace=True)
     # polygon of identified asteroid
-    print '>> Selects first object in good_neighbours to make polygon from'
+    # print '>> Selects first object in good_neighbours to make polygon from'
     a = object_data['a'][0] + r_err
     b = object_data['b'][0] + r_err
     th = object_data['theta'][0]
@@ -630,8 +628,8 @@ def check_involvement(object_data, catalogue, r_err, pvwcs, size_x, size_y):
         print ">> Object is on the edge"
         return
 
-    print '>> Asteroid boundary points: ({:.1f}, {:.1f}) ({:.1f}, {:.1f}) ({:.1f}, {:.1f}) ({:.1f}, {:.1f})'.format(
-        p1[0], p1[1], p2[0], p2[1], p3[0], p3[1], p4[0], p4[1])
+    # print '>> Asteroid boundary points: ({:.1f}, {:.1f}) ({:.1f}, {:.1f}) ({:.1f}, {:.1f}) ({:.1f}, {:.1f})'.format(
+    #    p1[0], p1[1], p2[0], p2[1], p3[0], p3[1], p4[0], p4[1])
 
     polygon = Polygon([p1, p2, p3, p4]).buffer(5)
     min_x, min_y, max_x, max_y = polygon.bounds
@@ -659,18 +657,16 @@ def check_num_stars(num_objs, size, object_name, expnum_p, username, password, f
     r_old = size * 0.184 / 3600
     r_new = r_old + 0.01
 
-    print '>> Size: {}'.format(size)
-
-    print '  Number of objects in image: {}'.format(num_objs)
+    print '>> Number of objects in image: {}'.format(num_objs)
     if num_objs <= 10:
         r_new = r_old + 0.02
         enough = False
         print '  Not enough stars in the stamp <<<<<<<<<<<<<<<<<<< {} {}'.format(r_old, r_new)
-        # get_stamps.get_one_stamp(object_name, expnum_p, r_new, username, password, family_name)
+        get_stamps.get_one_stamp(object_name, expnum_p, r_new, username, password, family_name)
     if 10 < num_objs < 30:
         enough = False
         print '  Not enough stars in the stamp <<<<<<<<<<<<<<<<<<< {} {}'.format(r_old, r_new)
-        # get_stamps.get_one_stamp(object_name, expnum_p, r_new, username, password, family_name)
+        get_stamps.get_one_stamp(object_name, expnum_p, r_new, username, password, family_name)
 
     return r_new, r_old, enough
 
@@ -712,6 +708,10 @@ def write_to_error_file(object_name, expnum, object_data, out_filename):
 
 
 def write_to_error_file2(object_name, expnum, out_filename):
+    """
+    Write image information to out file
+    """
+
     with open('{}/{}'.format(output_dir, out_filename), 'a') as outfile:
         try:
             outfile.write('{}\t{}\n'.format(object_name, expnum))
@@ -735,13 +735,13 @@ def init_dirs(family_name):
     """
 
     # initiate vos directories
-    global vos_dir
+    global vos_dir2
     vos_dir = '{}/{}'.format(_VOS_PATH, family_name)
     assert exists(vos_dir, force=True)
 
     # initiate local directories
     global family_dir
-    family_dir = os.path.join(_DIR_PATH, family_name)
+    family_dir = '{}/{}'.format(_DIR_PATH, family_name)
     assert os.path.isdir(family_dir)
 
     global output_dir
@@ -750,12 +750,12 @@ def init_dirs(family_name):
         os.makedirs(output_dir)
 
     global stamps_dir
-    stamps_dir = '{}/{}_stamps'.format(family_name, family_name)
+    stamps_dir = '{}/{}_stamps'.format(family_dir, family_name)
     if not os.path.isdir(stamps_dir):
         os.makedirs(stamps_dir)
 
     global image_list_path
-    image_list_path = '{}/{}_images.txt'.format(family_dir, family_name)
+    image_list_path = '{}/{}/{}_images.txt'.format(_DIR_PATH, family_dir, family_name)
 
 
 def add_day(date_range_t):

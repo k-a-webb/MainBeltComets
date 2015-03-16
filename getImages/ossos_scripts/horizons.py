@@ -88,7 +88,7 @@ def batch(object, t, T, step, su='d',
     # The pieces of the url that Horizons needs for its processing instructions. Leave intact.
     urlArr = ["http://ssd.jpl.nasa.gov/horizons_batch.cgi?batch=1&COMMAND=",
               '',
-              "&MAKE_EPHEM='YES'&TABLE_TYPE='OBSERVER'&START_TIME=",
+              "&MAKE_EPHEM='YES'&TABLE_TYPE='OBSERVER'&CENTER='568'&START_TIME=",
               '',
               "&STOP_TIME=",
               '',
