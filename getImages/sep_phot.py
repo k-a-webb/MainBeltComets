@@ -1,18 +1,15 @@
 import os
-import io
 import sep
 import vos
-import urllib2 as url
 import numpy as np
 from astropy.io import fits
-from astropy.table import Table, vstack
-from astropy.io import ascii
+from astropy.table import vstack
 from astropy.time import Time
 import argparse
 from scipy.spatial import cKDTree
 import math
 import pandas as pd
-from shapely.geometry import Polygon, Point
+from shapely.geometry import Polygon
 from astropy.coordinates import SkyCoord
 
 from ossos_scripts import storage
@@ -22,7 +19,6 @@ from ossos_scripts.horizons import batch
 
 from get_images import get_image_info
 import get_stamps
-import time
 
 client = vos.Client()
 _VOS_PATH = 'vos:kawebb/postage_stamps'
@@ -157,6 +153,7 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
             return
     except Exception, e:
         print 'ERROR: {}'.format(e)
+        write_to_error_file2(object_name, expnum_p, out_filename='{}/phot_err.txt'.format(output_dir))
         return
 
     try:
@@ -171,7 +168,7 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
     transients, catalogue, num_cat_objs = compare_to_catalogue(table)
     r_new, r_old, enough = check_num_stars(num_cat_objs, size, object_name, expnum_p, username, password, family_name)
     # if not enough:
-    #   return
+    # return
 
     print '-- Identifying object from nearest neighbours within {} pixels'.format(r_sig)
     i_list, found = find_neighbours(transients, pvwcs, r_sig, p_ra, p_dec, expnum_p, object_name)
@@ -180,7 +177,7 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
         return success
     try:
         good_neighbours, r_err = iden_good_neighbours(expnum_p, i_list, transients, mag_list_jpl,
-                                                      ra_dot, dec_dot, exptime)
+                                                      ra_dot, dec_dot, exptime, object_name)
         if good_neighbours is None:
             return
 
@@ -196,7 +193,8 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
             print '  More than one object identified <<<'
             # return
 
-        print_output(family_name, object_name, expnum_p, good_neighbours, ap, th, num_cat_objs, start)
+        write_to_file(object_name, expnum_p, good_neighbours, num_cat_objs, start,
+                      out_filename='{}_output.txt'.format(family_name))
 
     except Exception, e:
         print 'ERROR: {}'.format(e)
@@ -278,11 +276,14 @@ def sep_phot(data, ap, th):
     """
 
     # Measure a spatially variable background of some image data (np array)
+    '''
     try:
         bkg = sep.Background(data)  # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
     except Exception, e:
         data = data.byteswap(True).newbyteorder()
         bkg = sep.Background(data)  # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
+    '''
+    bkg = sep.Background(data)  # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
 
     # Directly subtract the background from the data in place
     bkg.subfrom(data)
@@ -403,91 +404,6 @@ def get_coords(object_name, time_start, time_end):
     return ra_deg, dec_deg, ra_dot, dec_dot
 
 
-def query_jpl(object_name, time_start, time_end, params, step, su='d'):
-    """
-    A copy from ossos/mop/src/ossos-pipeline/planning/plotting ?
-
-    :param object_name:
-    :param time_start:
-    :param time_end:
-    :param params:
-    :param step:
-    :param su:
-    :return:
-    """
-
-    # Construct the query url
-    s = "'"
-    for p in params:
-        s += "{},".format(p)
-
-    # form URL pieces that Horizon needs for its processing instructions
-    url_arr = ["http://ssd.jpl.nasa.gov/horizons_batch.cgi?batch=1&COMMAND=",
-               '',
-               "&MAKE_EPHEM='YES'&TABLE_TYPE='OBSERVER'&CENTER='568'&START_TIME=",
-               '',
-               "&STOP_TIME=",
-               '',
-               "&STEP_SIZE=",
-               '',
-               "&QUANTITIES=" + s,
-               "&CSV_FORMAT='YES'"]
-
-    # change the object name, start and end times, and time step into proper url-formatting
-    url_style_output = []
-    for obj in [object_name, time_start, time_end]:
-        oss = obj.split()
-        if len(oss) > 1:
-            ob = "'" + oss[0] + '%20' + oss[1] + "'"
-        else:
-            ob = "'" + object_name + "'"
-        url_style_output.append(ob)
-    step = "'" + str(step) + "%20" + su + "'"
-
-    # URL components
-    url_arr[1] = url_style_output[0]  # formatted object name
-    url_arr[3] = url_style_output[1]  # start time
-    url_arr[5] = url_style_output[2]  # end time
-    url_arr[7] = step  # time step
-    url_str = "".join(url_arr)  # create the url to pass to Horizons
-
-    # Query Horizons; if it's busy, wait and try again in a minute
-    done = 0
-    while not done:
-        url_han = url.urlopen(url_str)
-        url_data = url_han.readlines()
-        url_han.close()
-        if len(url_data[0].split()) > 1:
-            if "BUSY:" <> url_data[0].split()[1]:
-                done = 1
-            else:
-                print url_data[0],
-                print "Sleeping 60 s and trying again"
-                time.sleep(60)
-        else:
-            done = 1
-
-    EPHEM_CSV_START_MARKER = '$$SOE'
-    EPHEM_CSV_END_MARKER = '$$EOE'
-    ephemCSV_start = None
-    ephemCSV_end = None
-    for i, dataLine in enumerate(url_data):
-        if dataLine.strip() == EPHEM_CSV_START_MARKER:
-            ephemCSV_start = i
-        elif dataLine.strip() == EPHEM_CSV_END_MARKER:
-            ephemCSV_end = i
-    assert ephemCSV_start is not None, 'No ephem start'
-    assert ephemCSV_end is not None, 'No ephem end'
-    assert ephemCSV_start < ephemCSV_end, 'Ephem are a bit odd'
-    # The header, the lines *after* the start marker, up to (but not including, because it is a slice) the end marker
-    csv_lines = [url_data[ephemCSV_start - 2]] + url_data[ephemCSV_start + 1: ephemCSV_end]
-    ephemCSV = ''.join(csv_lines)
-    ephemCSVfile = io.BytesIO(ephemCSV)
-    ephemerides = pd.DataFrame.from_csv(ephemCSVfile)
-
-    return ephemerides
-
-
 def append_table(table, pvwcs, zeropt):
     """
     Calculates the RA and DEC and MAG and adds columns to the tale from the photometry
@@ -514,7 +430,7 @@ def append_table(table, pvwcs, zeropt):
     table['mag'] = mag_sep_list
     table['f'] = f_list
     # table['consistent_f'] = f_cond
-    #table['consistent_mag'] = mag_cond
+    # table['consistent_mag'] = mag_cond
     return table
 
 
@@ -581,9 +497,9 @@ def find_neighbours(transients, pvwcs, r_sig, p_ra, p_dec, expnum_p, object_name
 
 
 def neighbour_search(septable, pvwcs, r_sig, p_ra, p_dec):
-    '''
+    """
     Computes the nearest neighbours to predicted coordinates within an RA/DEC uncertainty circle
-    '''
+    """
     tree = cKDTree(zip((np.array(septable['x'])).ravel(), (np.array(septable['y'])).ravel()))
 
     p_x, p_y = pvwcs.sky2xy(p_ra, p_dec)  # convert from WCS to pixels
@@ -595,7 +511,7 @@ def neighbour_search(septable, pvwcs, r_sig, p_ra, p_dec):
     return i_list
 
 
-def iden_good_neighbours(expnum, i_list, septable, mag_list_jpl, ra_dot, dec_dot, exptime):
+def iden_good_neighbours(expnum, i_list, septable, mag_list_jpl, ra_dot, dec_dot, exptime, object_name):
     """
     Selects nearest neighbour object from predicted coordinates as object of interest
     In order:
@@ -633,23 +549,32 @@ def iden_good_neighbours(expnum, i_list, septable, mag_list_jpl, ra_dot, dec_dot
         print '>> Both conditions met by:'
         both_cond2 = add_consistency_message(both_cond, 'yes', 'yes')
         print both_cond2
+        if len(both_cond) > 1:
+            print '>> More than one object identified, writing to file <<'
+            write_to_error_file(object_name, expnum, both_cond, out_filename='multiple_iden.txt')
         return both_cond2, f_pix_err
     elif len(only_f_cond) > 0:
         print '>> Elongation is consistent, magnitude is not:'
         only_f_cond2 = add_consistency_message(only_f_cond, 'yes', 'no')
         print only_f_cond2
+        if len(only_f_cond) > 1:
+            print '>> More than one object identified, writing to file <<'
+            write_to_error_file(object_name, expnum, only_f_cond2, out_filename='multiple_iden.txt')
         return only_f_cond2, f_pix_err
     elif len(only_mag_cond) > 0:
         print '>> Magnitude is consistent, elongation is not:'
         only_mag_cond2 = add_consistency_message(only_mag_cond, 'no', 'yes')
         print only_mag_cond2
+        if len(only_mag_cond) > 1:
+            print '>> More than one object identified, writing to file <<'
+            write_to_error_file(object_name, expnum, only_mag_cond2, out_filename='multiple_iden.txt')
         return only_mag_cond2, f_pix_err
     else:
         print "WARNING: No condition could be satisfied <<<<<<<<<<<<<<<<<<<<<<<<<<<<"
         print '  Nearest neighbours:'
         print i_table
         print "  Mag mean, accepted error: {:.2f} {:.2f}".format(mean, magrange)
-        septable.to_csv('asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum), sep='\t')
+        write_to_error_file(object_name, expnum, i_table, out_filename='no_iden.txt')
         raise Exception
 
 
@@ -719,12 +644,12 @@ def check_involvement(object_data, catalogue, r_err, pvwcs, size_x, size_y):
     cat_list = catalogue.query('({} < ra < {}) & ({} < dec < {})'.format(ra - ra_range, ra + ra_range,
                                                                          dec - dec_range, dec + dec_range))
     if len(cat_list) > 0:
-        print "  Object is involved <<<<<<<<<<<<<<<<<<<"
+        print ">> Object is involved <<<<<<<<<<<<<<<<<<<"
         print cat_list
         involved = True
         return involved
     else:
-        print '  Object is not involved'
+        print '>> Object is not involved'
         involved = False
         return involved
 
@@ -750,12 +675,12 @@ def check_num_stars(num_objs, size, object_name, expnum_p, username, password, f
     return r_new, r_old, enough
 
 
-def print_output(family_name, object_name, expnum_p, object_data, ap, th, num_objs, start):
-    if object_data is None:
-        print "WARNING: Could not identify object {} in image".format(object_name, expnum_p)
+def write_to_file(object_name, expnum_p, object_data, num_objs, start, out_filename):
+    """
+    Prints to outfile
+    """
 
-    else:
-        out_filename = '{}_r{}_t{}_output.txt'.format(family_name, ap, th)
+    if object_data is not None:
 
         time_start = Time(start, format='iso')
         time_mjd = time_start.mjd
@@ -763,8 +688,6 @@ def print_output(family_name, object_name, expnum_p, object_data, ap, th, num_ob
         with open('{}/{}'.format(output_dir, out_filename), 'a') as outfile:
             try:
                 for i in range(0, len(object_data)):
-                    # good_neighbours = 'x', 'y', 'ra', 'dec', 'mag', 'flux', 'a', 'b', 'theta'
-                    # 'object', 'expnum', 'ra', 'dec', 'flux', 'mag', 'x', 'y', 'stars', 'time'
                     outfile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
                         object_name, expnum_p, object_data['ra'][i], object_data['dec'][i], object_data['flux'][i],
                         object_data['mag'][i], object_data['x'][i], object_data['y'][i], num_objs, time_mjd,
@@ -772,7 +695,29 @@ def print_output(family_name, object_name, expnum_p, object_data, ap, th, num_ob
             except Exception, e:
                 print "ERROR: cannot write to outfile {} <<<<<<<<<<<<".format(e)
 
-        return object_data
+    else:
+        print "WARNING: Could not identify object {} in image".format(object_name, expnum_p)
+
+
+def write_to_error_file(object_name, expnum, object_data, out_filename):
+    with open('{}/{}'.format(output_dir, out_filename), 'a') as outfile:
+        try:
+            for i in range(0, len(object_data)):
+                outfile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
+                    object_name, expnum, object_data['ra'][i], object_data['dec'][i], object_data['flux'][i],
+                    object_data['mag'][i], object_data['x'][i], object_data['y'][i],
+                    object_data['consistent_f'][i], object_data['consistent_mag'][i]))
+        except Exception, e:
+            print "ERROR: cannot write to outfile {} <<<<<<<<<<<<".format(e)
+
+
+def write_to_error_file2(object_name, expnum, out_filename):
+    with open('{}/{}'.format(output_dir, out_filename), 'a') as outfile:
+        try:
+            outfile.write('{}\t{}\n'.format(object_name, expnum))
+
+        except Exception, e:
+            print "ERROR: cannot write to outfile {} <<<<<<<<<<<<".format(e)
 
 
 def cut_centered_stamp(family_name, object_name, expnum_p, object_data, r_old, username, password):
@@ -781,8 +726,7 @@ def cut_centered_stamp(family_name, object_name, expnum_p, object_data, r_old, u
         # objectname, expnum_p, r_new, RA, DEC, username, password, familyname
         print '-- Cutting recentered stamp'
         get_stamps.centered_stamp(object_name, expnum_p, r_old, object_data[0][5], object_data[0][6], username,
-                                  password,
-                                  family_name)
+                                  password, family_name)
 
 
 def init_dirs(family_name):
