@@ -83,7 +83,6 @@ def get_stamps(familyname, username, password, radius, suffix):
             cutout(username, password, familyname, table['object'][row], table['expnum'][row], table['ra'][row],
                    table['dec'][row], radius)
 
-
 def get_one_stamp(object_name, expnum, radius, username, password, familyname):
     init_dirs(familyname)
 
@@ -92,21 +91,21 @@ def get_one_stamp(object_name, expnum, radius, username, password, familyname):
     image_list = '{}/{}_images.txt'.format(family_dir, familyname)
     with open(image_list) as infile:
         for line in infile.readlines()[1:]:  # skip header info
-            assert len(line.split()) > 0
-            object_name = line.split()[0]
-            expnum_file = line.split()[1]
-            ra = float(line.split()[3])
-            dec = float(line.split()[4])
+            if len(line.split()) > 0:
+                object_name_file = line.split()[0]
+                expnum_file = line.split()[1]
+                ra = float(line.split()[3])
+                dec = float(line.split()[4])
 
-            if expnum == expnum_file:
+                if (expnum == expnum_file) & (object_name == object_name_file):
 
-                postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(object_name, expnum, ra, dec)
-                storage.remove('vos:kawebb/postage_stamps/{}/{}'.format(familyname, postage_stamp_filename))
-                file_path = '{}/{}_stamps/{}'.format(family_dir, familyname, postage_stamp_filename)
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                cutout(username, password, familyname, object_name, expnum, ra, dec, radius)
-                return
+                    postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(object_name, expnum, ra, dec)
+                    storage.remove('vos:kawebb/postage_stamps/{}/{}'.format(familyname, postage_stamp_filename))
+                    file_path = '{}/{}_stamps/{}'.format(family_dir, familyname, postage_stamp_filename)
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    cutout(username, password, familyname, object_name, expnum, ra, dec, radius)
+                    return
 
     '''
     image_list_path = 'asteroid_families/{}/{}_images_test.txt'.format(familyname, familyname)
@@ -189,6 +188,7 @@ def cutout(username, password, family_name, object_name, image, ra, dec, radius,
     r = requests.get(BASEURL, params=params, auth=(username, password))
 
     try:
+        # print "Getting extension: {}".format(extname)
         r.raise_for_status()
         full_fobj = fits.open(StringIO(r.content))
         if extname is not None:
@@ -199,10 +199,11 @@ def cutout(username, password, family_name, object_name, image, ra, dec, radius,
         print 'Connection Failed, {}'.format(e)
         return
 
+    # print "Got this much data: {}".format(cutout_fobj.data.shape)
     cutout_fobj = fits.PrimaryHDU(data=cutout_fobj.data, header=cutout_fobj.header)
 
     postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(object_name, image, float(ra), float(dec))
-    cutout_fobj.writeto("{}/{}".format(output_dir, postage_stamp_filename))
+    cutout_fobj.writeto("{}/{}".format(output_dir, postage_stamp_filename), clobber=True)
     del cutout_fobj
     if test:
         return
