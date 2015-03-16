@@ -7,6 +7,7 @@ import argparse
 from ossos_scripts.ssos import Query
 import time
 import pandas as pd
+import find_family
 
 dir_path_base = '/Users/admin/Desktop/MainBeltComets/getImages/asteroid_families'
 
@@ -38,7 +39,7 @@ def main():
 
     args = parser.parse_args()
 
-    get_image_info(args.family, args.suffix, args.filter, args.type)
+    get_image_info(args.family, args.filter, args.type, args.suffix)
 
 
 def get_image_info(familyname, filtertype='r', imagetype='p', suffix=None):
@@ -52,20 +53,20 @@ def get_image_info(familyname, filtertype='r', imagetype='p', suffix=None):
         search=bynameMPC; epoch1=2013+01+01; epoch2=2015+1+16; eellipse=; eunits=arcseconds; extres=yes; xyres=yes; format=tsv
     """
 
-    family_dir = os.path.join(dir_path_base, familyname)
-    if not os.path.isdir(family_dir):
-        print "Invalid family name or directory does not exist"
-
-    if suffix is None:
-        family_list = '{}/{}_family.txt'.format(family_dir, familyname)
-        output = '{}_images.txt'.format(familyname)
-    else:
+    print suffix
+    if suffix is not None:
         family_list = '{}/none_family_{}.txt'.format(family_dir, suffix)
         output = '{}_images_{}_1.txt'.format(familyname, suffix)
+    else:
+        family_list = '{}/{}_family.txt'.format(family_dir, familyname)
+        output = '{}_images.txt'.format(familyname)
 
-    with open(family_list) as infile:
-        filestr = infile.read()
-    object_list = filestr.split('\n')  # array of objects to query
+    if os.exists(family_list):
+        with open(family_list) as infile:
+            filestr = infile.read()
+        object_list = filestr.split('\n')  # array of objects to query
+    else:
+        object_list = find_family.find_family_members(familyname)
 
     # From the given input, identify the desired filter and rename appropriately
     if filtertype.lower().__contains__('r'):
