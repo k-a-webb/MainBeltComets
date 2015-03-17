@@ -142,34 +142,45 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
 
     try:
         print "-- Performing photometry on image {} ".format(expnum_p)
-        septable, exptime, zeropt, size, pvwcs, start, end, size_x, size_y = \
-            get_fits_data(object_name, expnum_p, ap, th)
-
+        septable, exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_fits_data(object_name, expnum_p, ap, th)
 
     except Exception, e:
-        print 'ERROR: {}'.format(e)
-        write_to_error_file2(object_name, expnum_p, out_filename='phot_err.txt')
-        return success
-
+        if 'internal pixel buffer full' or 'object deblending overflow' in e.message:
+            print "ERROR: {}".format(e)
+            try:
+                print '>> Trying again with three times the threshold'
+                septable, exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_fits_data(object_name, expnum_p, ap, th*3)
+            except Exception, e:
+                if 'internal pixel buffer full' or 'object deblending overflow' in e.message:
+                    try:
+                        print '>> Trying again with six times the threshold'
+                        septable, exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_fits_data(object_name, expnum_p, ap, th*6)
+                    except Exception, e:
+                        write_to_error_file2(object_name, expnum_p, out_filename="phot_param_err.txt")
+                        return True
+        else:
+            return True
     try:
         print "-- Querying JPL Horizon's ephemeris"
         mag_list_jpl, r_sig = get_mag_rad(family_name, object_name)
         p_ra, p_dec, ra_dot, dec_dot = get_coords(object_name, start, end)
     except Exception, e:
         print 'ERROR: Error while doing JPL query, {}'.format(e)
-        raise
+        return True
+    except AssertionError, e:
+        print 'Error in JPL query, no ephem start'
+        return True
 
     table = append_table(septable, pvwcs, zeropt)
     transients, catalogue, num_cat_objs = compare_to_catalogue(table)
-    r_new, r_old, enough = check_num_stars(num_cat_objs, size, object_name, expnum_p, username, password, family_name)
+    r_new, r_old, enough = check_num_stars(num_cat_objs, size, size_ccd, object_name, expnum_p, username, password, family_name)
     if not enough:
         return success
 
     print '-- Identifying object from nearest neighbours within {} pixels'.format(r_sig)
     i_list, found = find_neighbours(transients, pvwcs, r_sig, p_ra, p_dec, expnum_p, object_name)
     if not found:
-        success = True
-        return success
+        return True
     try:
         good_neighbours, r_err = iden_good_neighbours(expnum_p, i_list, transients, mag_list_jpl,
                                                       ra_dot, dec_dot, exptime, object_name)
@@ -182,8 +193,7 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
                 print '-- Cutting out recentered postage stamp'
                 # cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, r_old, username, password)
             else:
-                success = True
-                return success
+                return True
         else:
             print '  More than one object identified <<<'
             # return
@@ -195,9 +205,8 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
         print 'ERROR: {}'.format(e)
         # get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
 
-    success = True
 
-    return success
+    return True
 
 
 def get_fits_data(object_name, expnum_p, ap, th):
@@ -206,26 +215,20 @@ def get_fits_data(object_name, expnum_p, ap, th):
     returns photometry measurements and header values
     """
 
+    try:
+        assert storage.exists(vos_dir)
+        for fits_file in client.listdir(vos_dir):  # images named with convention: object_expnum_RA_DEC.fits
 
+            if fits_file.endswith('.fits'):
+                objectname_file = fits_file.split('_')[0]
+                expnum_file = fits_file.split('_')[1]
 
-    stamp_found = False  # if stamps not found, returns to do_all to try again
-    assert storage.exists(vos_dir)
-    for fits_file in client.listdir(vos_dir):  # images named with convention: object_expnum_RA_DEC.fits
+                if (expnum_file == expnum_p) and (objectname_file == object_name):
+                    file_path = '{}/{}'.format(stamps_dir, fits_file)
+                    storage.copy('{}/{}'.format(vos_dir, fits_file), file_path)
 
-         if fits_file.endswith('.fits'):
-            objectname_file = fits_file.split('_')[0]
-            expnum_file = fits_file.split('_')[1]
-
-            if (expnum_file == expnum_p) and (objectname_file == object_name):
-                print '>> File found: {}'.format(fits_file)
-                stamp_found = True
-                file_path = '{}/{}'.format(stamps_dir, fits_file)
-                storage.copy('{}/{}'.format(vos_dir, fits_file), file_path)
-
-                try:
                     with fits.open('{}/{}'.format(stamps_dir, fits_file)) as hdulist:
                         print hdulist.info()
-
                         if hdulist[0].data is None:
                             print 'IMAGE is mosaic'
                             data1 = fits.getdata(file_path, 1)
@@ -248,28 +251,35 @@ def get_fits_data(object_name, expnum_p, ap, th):
                             size_y = header['NAXIS2']
                             table = sep_phot(data, ap, th)
 
-                except Exception, e:
-                    print 'ERROR: {} xxxxxxxxxxx'.format(e)
-                    raise
 
-                os.unlink('{}/{}'.format(stamps_dir, fits_file))
-                pvwcs = wcs.WCS(header)
-                zeropt = header['PHOTZP']
-                exptime = header['EXPTIME']
-                start = '{} {}'.format(header['DATE-OBS'], header['UTIME'])
-                end = '{} {}'.format(header['DATEEND'], header['UTCEND'])
-                # table.to_csv('{}/{}_phot.txt'.format(output_dir, expnum_p), sep='\t')
+                    os.unlink('{}/{}'.format(stamps_dir, fits_file))
 
-                if size_x > size_y:
-                    size = size_x
-                else:
-                    size = size_y
+                    pvwcs = wcs.WCS(header)
+                    zeropt = header['PHOTZP']
+                    exptime = header['EXPTIME']
+                    size_ccd = header['CCDSIZE']
+                    start = '{} {}'.format(header['DATE-OBS'], header['UTIME'])
+                    end = '{} {}'.format(header['DATEEND'], header['UTCEND'])
+                    # table.to_csv('{}/{}_phot.txt'.format(output_dir, expnum_p), sep='\t')
 
-                return table, exptime, zeropt, size, pvwcs, start, end, size_x, size_y
+                    if size_x > size_y:
+                        size = size_x
+                    else:
+                        size = size_y
 
-    if not stamp_found:
-            print "WARNING: Image does not exist for {} {}".format(object_name, expnum_p)
-            return
+                    return table, exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd
+
+    except TypeError:
+        print "WARNING: Image does not exist for {} {}".format(object_name, expnum_p)
+        raise
+    except Exception, e:
+        if e.message == 'invalid aperture parameters':
+            print 'ERROR: {}'.format(e)
+            raise
+        else:
+            print 'ERROR: {}'.format(e)
+            raise
+
 
 def sep_phot(data, ap, th):
     """
@@ -289,7 +299,6 @@ def sep_phot(data, ap, th):
     # for the background subtracted data, detect objects in data given some threshold
     thresh = th * bkg.globalrms  # ensure the threshold is high enough wrt background
     objs = sep.extract(data, thresh)
-
     # calculate the Kron radius for each object, then we perform elliptical aperture photometry within that radius
     kronrad, krflag = sep.kron_radius(data, objs['x'], objs['y'], objs['a'], objs['b'], objs['theta'], ap)
     flux, fluxerr, flag = sep.sum_ellipse(data, objs['x'], objs['y'], objs['a'], objs['b'], objs['theta'],
@@ -345,7 +354,7 @@ def get_mag_rad(family_name, object_name):
     if time_start == time_end:
         time_end = add_day(date_range_t)
 
-    # print " Date range in query: {} -- {}".format(time_start, time_end)
+    print " Date range in query: {} -- {}".format(time_start, time_end)
 
     # output = batch("Haumea", "2010-12-28 10:00", "2010-12-29 10:00", 1, su='d')
     orbital_elements, ephemerides = batch(object_name, time_start, time_end, step=1, su='d', params=[9, 36])
@@ -545,7 +554,7 @@ def iden_good_neighbours(expnum, i_list, septable, mag_list_jpl, ra_dot, dec_dot
 
     if len(both_cond) > 0:
         print '>> Both conditions met by:'
-        both_cond2 = add_consistency_message(both_cond, 'yes', 'yes')
+        both_cond2 = add_to_object_table(both_cond, 'yes', 'yes')
         print both_cond2
         if len(both_cond) > 1:
             print '>> More than one object identified, writing to file <<'
@@ -553,7 +562,7 @@ def iden_good_neighbours(expnum, i_list, septable, mag_list_jpl, ra_dot, dec_dot
         return both_cond2, f_pix_err
     elif len(only_f_cond) > 0:
         print '>> Elongation is consistent, magnitude is not:'
-        only_f_cond2 = add_consistency_message(only_f_cond, 'yes', 'no')
+        only_f_cond2 = add_to_object_table(only_f_cond, 'yes', 'no')
         print only_f_cond2
         if len(only_f_cond) > 1:
             print '>> More than one object identified, writing to file <<'
@@ -561,7 +570,7 @@ def iden_good_neighbours(expnum, i_list, septable, mag_list_jpl, ra_dot, dec_dot
         return only_f_cond2, f_pix_err
     elif len(only_mag_cond) > 0:
         print '>> Magnitude is consistent, elongation is not:'
-        only_mag_cond2 = add_consistency_message(only_mag_cond, 'no', 'yes')
+        only_mag_cond2 = add_to_object_table(only_mag_cond, 'no', 'yes')
         print only_mag_cond2
         if len(only_mag_cond) > 1:
             print '>> More than one object identified, writing to file <<'
@@ -576,7 +585,7 @@ def iden_good_neighbours(expnum, i_list, septable, mag_list_jpl, ra_dot, dec_dot
         raise Exception
 
 
-def add_consistency_message(table, first, second):
+def add_to_object_table(table, first, second):
     """
     Adds 'yes' or 'no' to consistent_f and consistent_mag columns on identified object table
     """
@@ -629,7 +638,7 @@ def check_involvement(object_data, catalogue, r_err, pvwcs, size_x, size_y):
         return
 
     # print '>> Asteroid boundary points: ({:.1f}, {:.1f}) ({:.1f}, {:.1f}) ({:.1f}, {:.1f}) ({:.1f}, {:.1f})'.format(
-    #    p1[0], p1[1], p2[0], p2[1], p3[0], p3[1], p4[0], p4[1])
+    # p1[0], p1[1], p2[0], p2[1], p3[0], p3[1], p4[0], p4[1])
 
     polygon = Polygon([p1, p2, p3, p4]).buffer(5)
     min_x, min_y, max_x, max_y = polygon.bounds
@@ -652,21 +661,24 @@ def check_involvement(object_data, catalogue, r_err, pvwcs, size_x, size_y):
         return involved
 
 
-def check_num_stars(num_objs, size, object_name, expnum_p, username, password, family_name):
+def check_num_stars(num_objs, size, size_ccd, object_name, expnum_p, username, password, family_name):
     enough = True
     r_old = size * 0.184 / 3600
-    r_new = r_old + 0.01
+    r_new = (size + 100) * 0.184 / 3600
+
+    x_max = float((size_ccd.split(',')[0]).split(':')[1])*0.184/3600
+    y_max = float(((size_ccd.split(',')[1]).split(':')[1]).strip(']'))*0.184/3600
+
+    assert r_new < y_max
+    if r_new > (900*0.184/3600):
+        r_new = (900*0.184/3600)
 
     print '>> Number of objects in image: {}'.format(num_objs)
-    if num_objs <= 10:
-        r_new = r_old + 0.02
-        enough = False
+    if num_objs <= 30:
         print '  Not enough stars in the stamp <<<<<<<<<<<<<<<<<<< {} {}'.format(r_old, r_new)
-        get_stamps.get_one_stamp(object_name, expnum_p, r_new, username, password, family_name)
-    if 10 < num_objs < 30:
-        enough = False
-        print '  Not enough stars in the stamp <<<<<<<<<<<<<<<<<<< {} {}'.format(r_old, r_new)
-        get_stamps.get_one_stamp(object_name, expnum_p, r_new, username, password, family_name)
+        if r_new != (900*0.184/3600):
+            enough = False
+            get_stamps.get_one_stamp(object_name, expnum_p, r_new, username, password, family_name)
 
     return r_new, r_old, enough
 
