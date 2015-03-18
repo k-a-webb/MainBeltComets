@@ -32,7 +32,7 @@ _ERR_ELL_RAD = 15  # default radius of the error ellipse
 _MAG_ERR = 2  # default min range of magnitude from predicted by JPL
 _CAT_r_TOL = 5 * 0.184 / 3600  # Tolerance for error in RA DEC position from Stephens catalogue [pixels to degrees]
 _CAT_mag_TOL = 1  # Tolerance for error in measured magnitude from Stephens catalogue
-_F_ERR = 40.0  # Tolerance for error in calculation focal length
+_F_ERR = 20.0  # Tolerance for error in calculation focal length
 
 '''
 Preforms photometry on .fits files given an input of family name and object name
@@ -123,15 +123,15 @@ def find_objects_by_phot(family_name, object_name, ap, th, filter_type='r', imag
     if object_name is None:
         for index, image_object in enumerate(image_list):
             print 'Finding asteroid {} in family {} '.format(object_name, family_name)
-            iterate_thru_images(family_name, image_object, expnum_list[index], ap, th, filter_type, image_type)
+            iterate_thru_images(family_name, image_object, expnum_list[index], ap, th)
     else:
         for index, image_object in enumerate(image_list):
             if object_name == image_object:
                 print 'Finding asteroid {} in family {} '.format(object_name, family_name)
-                iterate_thru_images(family_name, object_name, expnum_list[index], ap, th, filter_type, image_type)
+                iterate_thru_images(family_name, object_name, expnum_list[index], ap, th)
 
 
-def iterate_thru_images(family_name, object_name, expnum_p, username, password, ap, th, filtertype='r', imagetype='p'):
+def iterate_thru_images(family_name, object_name, expnum_p, username, password, ap, th):
     """
     For a given family, object, and exposure number, get orbital information of the object in the image
     """
@@ -142,24 +142,24 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
 
     try:
         print "-- Performing photometry on image {} ".format(expnum_p)
-        septable, exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_fits_data(object_name, expnum_p, ap, th)
+        septable, header = get_fits_data(object_name, expnum_p, ap, th)
+        exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_header_info(header)
 
     except Exception, e:
-        if 'internal pixel buffer full' or 'object deblending overflow' in e.message:
+        if ('internal pixel buffer full' in e.message) or ('object deblending overflow' in e.message):
             print "ERROR: {}".format(e)
             try:
                 print '>> Trying again with three times the threshold'
-                septable, exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_fits_data(object_name, expnum_p, ap, th*3)
+                septable, header = get_fits_data(object_name, expnum_p, ap, th*3)
+                exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_header_info(header)
             except Exception, e:
-                if 'internal pixel buffer full' or 'object deblending overflow' in e.message:
-                    try:
-                        print '>> Trying again with six times the threshold'
-                        septable, exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_fits_data(object_name, expnum_p, ap, th*6)
-                    except Exception, e:
-                        write_to_error_file2(object_name, expnum_p, out_filename="phot_param_err.txt")
-                        return True
+                write_to_error_file2(object_name, expnum_p, out_filename="phot_param_err.txt")
+                return True
+        elif ('PHOTZP' in e.message):
+            return False
         else:
             return True
+
     try:
         print "-- Querying JPL Horizon's ephemeris"
         mag_list_jpl, r_sig = get_mag_rad(family_name, object_name)
@@ -171,40 +171,37 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
         print 'Error in JPL query, no ephem start'
         return True
 
-    table = append_table(septable, pvwcs, zeropt)
-    transients, catalogue, num_cat_objs = compare_to_catalogue(table)
-    r_new, r_old, enough = check_num_stars(num_cat_objs, size, size_ccd, object_name, expnum_p, username, password, family_name)
+    table = append_table(septable, pvwcs, zeropt, p_ra, p_dec)
+    transients, catalogue, num_cat_objs, catalog_stars = compare_to_catalogue(table)
+    r_new, r_old, enough = check_num_stars(num_cat_objs, size, size_ccd, object_name, expnum_p, username, password,
+                                           family_name)
     if not enough:
         return success
 
-    print '-- Identifying object from nearest neighbours within {} pixels'.format(r_sig)
-    i_list, found = find_neighbours(transients, pvwcs, r_sig, p_ra, p_dec, expnum_p, object_name)
-    if not found:
-        return True
     try:
-        good_neighbours, r_err = iden_good_neighbours(expnum_p, i_list, transients, mag_list_jpl,
-                                                      ra_dot, dec_dot, exptime, object_name)
+        good_neighbours, r_err = iden_good_neighbours(object_name, transients, septable, pvwcs, r_sig, p_ra, p_dec,
+                                                      expnum_p, mag_list_jpl, ra_dot, dec_dot, exptime)
         if good_neighbours is None:
-            return
+            return True
 
         if len(good_neighbours) == 1:
             involved = check_involvement(good_neighbours, catalogue, r_err, pvwcs, size_x, size_y)
-            if not involved:
+            if involved:
+                write_to_error_file2(object_name, expnum_p, out_filename='involved.txt')
+                return True
+            else:
+                write_to_file(object_name, expnum_p, good_neighbours, num_cat_objs, start,
+                              out_filename='{}_output.txt'.format(family_name))
                 print '-- Cutting out recentered postage stamp'
                 # cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, r_old, username, password)
-            else:
-                return True
+
         else:
             print '  More than one object identified <<<'
-            # return
-
-        write_to_file(object_name, expnum_p, good_neighbours, num_cat_objs, start,
-                      out_filename='{}_output.txt'.format(family_name))
+            return True
 
     except Exception, e:
         print 'ERROR: {}'.format(e)
         # get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
-
 
     return True
 
@@ -234,9 +231,7 @@ def get_fits_data(object_name, expnum_p, ap, th):
                             data1 = fits.getdata(file_path, 1)
                             data2 = fits.getdata(file_path, 2)
                             header = fits.getheader(file_path, 1)
-                            header2 = fits.getheader(file_path, 2)
-                            size_x = header['NAXIS1'] + header2['NAXIS1']
-                            size_y = header['NAXIS2'] + header2['NAXIS2']
+
                             print 'good until here'
 
                             table1 = sep_phot(data1, ap, th)
@@ -247,27 +242,11 @@ def get_fits_data(object_name, expnum_p, ap, th):
                         else:
                             data = fits.getdata(file_path)
                             header = fits.getheader(file_path)
-                            size_x = header['NAXIS1']
-                            size_y = header['NAXIS2']
                             table = sep_phot(data, ap, th)
-
 
                     os.unlink('{}/{}'.format(stamps_dir, fits_file))
 
-                    pvwcs = wcs.WCS(header)
-                    zeropt = header['PHOTZP']
-                    exptime = header['EXPTIME']
-                    size_ccd = header['CCDSIZE']
-                    start = '{} {}'.format(header['DATE-OBS'], header['UTIME'])
-                    end = '{} {}'.format(header['DATEEND'], header['UTCEND'])
-                    # table.to_csv('{}/{}_phot.txt'.format(output_dir, expnum_p), sep='\t')
-
-                    if size_x > size_y:
-                        size = size_x
-                    else:
-                        size = size_y
-
-                    return table, exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd
+                    return table, header
 
     except TypeError:
         print "WARNING: Image does not exist for {} {}".format(object_name, expnum_p)
@@ -279,6 +258,28 @@ def get_fits_data(object_name, expnum_p, ap, th):
         else:
             print 'ERROR: {}'.format(e)
             raise
+
+
+def get_header_info(header):
+    """
+    Get values from image header
+    """
+
+    pvwcs = wcs.WCS(header)
+    size_x = header['NAXIS1']
+    size_y = header['NAXIS2']
+    zeropt = header['PHOTZP']
+    exptime = header['EXPTIME']
+    size_ccd = header['CCDSIZE']
+    start = '{} {}'.format(header['DATE-OBS'], header['UTIME'])
+    end = '{} {}'.format(header['DATEEND'], header['UTCEND'])
+
+    if size_x > size_y:
+        size = size_x
+    else:
+        size = size_y
+
+    return exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd
 
 
 def sep_phot(data, ap, th):
@@ -411,7 +412,7 @@ def get_coords(object_name, time_start, time_end):
     return ra_deg, dec_deg, ra_dot, dec_dot
 
 
-def append_table(table, pvwcs, zeropt):
+def append_table(table, pvwcs, zeropt, p_ra, p_dec):
     """
     Calculates the RA and DEC and MAG and adds columns to the tale from the photometry
     """
@@ -419,25 +420,26 @@ def append_table(table, pvwcs, zeropt):
     dec_list = []
     mag_sep_list = []
     f_list = []
-    f_cond = []
-    mag_cond = []
+    diff_ra = []
+    diff_dec = []
+
     for row in range(len(table)):
         try:
             ra, dec = pvwcs.xy2sky(table['x'][row], table['y'][row])
             ra_list.append(ra)
             dec_list.append(dec)
             mag_sep_list.append(-2.5 * math.log10(table['flux'][row]) + zeropt)
-            f_list.append((table['a'][row] * table['a'][row] - table['b'][row] * table['b'][row]) ** 0.5)
-            f_cond.append('Nan')
-            mag_cond.append('Nan')
+            f_list.append((table['a'][row] ** 2 - table['b'][row] ** 2) ** 0.5)
+            diff_ra.append((p_ra - ra) * 3600)
+            diff_dec.append((p_dec - dec) * 3600)
         except Exception, e:
             print 'Error: {} row {}'.format(e, row)
     table['ra'] = ra_list
     table['dec'] = dec_list
     table['mag'] = mag_sep_list
     table['f'] = f_list
-    # table['consistent_f'] = f_cond
-    # table['consistent_mag'] = mag_cond
+    table['diff_ra'] = diff_ra
+    table['diff_dec'] = diff_dec
     return table
 
 
@@ -459,6 +461,7 @@ def compare_to_catalogue(sep_table):
 
     cat_objs = 0
     trans_list = []
+    cat_list = []
 
     for row in range(len(sep_table)):
         # index = catalogue[( abs(catalogue.ra - sep_table['ra'][row]) < 0.0051111 )]
@@ -474,42 +477,36 @@ def compare_to_catalogue(sep_table):
 
         else:
             cat_objs += len(index)
+            cat_list.append(row)
 
     if len(trans_list) == 0:
         print "WARNING: No transients identified"
     transients = sep_table.irow(trans_list)
+    catalog_stars = sep_table.irow(cat_list)
 
-    return transients, catalogue, cat_objs
+    return transients, catalogue, cat_objs, catalog_stars
 
 
-def find_neighbours(transients, pvwcs, r_sig, p_ra, p_dec, expnum_p, object_name):
-    p_x, p_y = pvwcs.sky2xy(p_ra, p_dec)
-    print "  Predicted RA, DEC : {:.2f}  {:.2f}".format(p_ra, p_dec)
-    print "  Predicted x, y : {:.2f}  {:.2f}".format(p_x, p_y)
-
+def find_neighbours(transients, r_sig, p_x, p_y, f_pix, f_pix_err, expnum_p, object_name):
     found = True
 
-    i_list = neighbour_search(transients, pvwcs, r_sig, p_ra, p_dec)
+    i_list = neighbour_search(transients, r_sig, p_x, p_y)
     if len(i_list) == 0:
         print '-- Expanding radius of nearest neighbour search by 1.5x'
-        i_list = neighbour_search(transients, pvwcs, 2 * r_sig, p_ra, p_dec)
+        i_list = neighbour_search(transients, 2 * r_sig, p_x, p_y)
         if len(i_list) == 0:
             print 'WARNING: No nearest neighbours were found within {} ++++++++++++++++++++++'.format(r_sig * 1.5)
             transients.to_csv('asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum_p), sep='\t')
-            with open('{}/no_object_found.txt'.format(output_dir), 'a') as infile:
-                infile.write('{}\t{}\n'.format(object_name, expnum_p))
             found = False
 
     return i_list, found
 
 
-def neighbour_search(septable, pvwcs, r_sig, p_ra, p_dec):
+def neighbour_search(transients, r_sig, p_x, p_y):
     """
     Computes the nearest neighbours to predicted coordinates within an RA/DEC uncertainty circle
     """
-    tree = cKDTree(zip((np.array(septable['x'])).ravel(), (np.array(septable['y'])).ravel()))
-
-    p_x, p_y = pvwcs.sky2xy(p_ra, p_dec)  # convert from WCS to pixels
+    tree = cKDTree(zip((np.array(transients['x'])).ravel(), (np.array(transients['y'])).ravel()))
 
     # parse through table and get RA and DEC closest to predicted coordinates (in pixels)
     coords = np.array([p_x, p_y])
@@ -518,13 +515,18 @@ def neighbour_search(septable, pvwcs, r_sig, p_ra, p_dec):
     return i_list
 
 
-def iden_good_neighbours(expnum, i_list, septable, mag_list_jpl, ra_dot, dec_dot, exptime, object_name):
+def iden_good_neighbours(object_name, transients, septable, pvwcs, r_sig, p_ra, p_dec,
+                         expnum, mag_list_jpl, ra_dot, dec_dot, exptime):
     """
     Selects nearest neighbour object from predicted coordinates as object of interest
     In order:
         Compares measured apparent magnitude to predicted, passes if in range of values
         Calculates eccentricity, passes if greater than minimum value that is inputted
     """
+
+    p_x, p_y = pvwcs.sky2xy(p_ra, p_dec)
+    print "  Predicted RA, DEC : {:.4f}  {:.4f}".format(p_ra, p_dec)
+    print "  Predicted x, y : {:.2f}  {:.2f}".format(p_x, p_y)
 
     # Set theoretical magnitude as mean of range with uncertainty of _MAG_ERR or magnitude variance
     mean = np.mean(mag_list_jpl)
@@ -538,14 +540,21 @@ def iden_good_neighbours(expnum, i_list, septable, mag_list_jpl, ra_dot, dec_dot
     # calculate theoretical focal length
     # print '>> Error allowance is set to {} percent'.format(_F_ERR)
     # print '>> RA_dot: {:.2f}, DEC_dot: {:.2f}, exptime: {:.1f}'.format(ra_dot, dec_dot, exptime)
-    f_pix = ((ra_dot / 2) ** 2 + (dec_dot / 2) ** 2) ** 0.5 * (exptime / (3600 * 0.184))
+    f_pix = 0.5 * ((ra_dot / 2) ** 2 + (dec_dot / 2) ** 2) ** 0.5 * (exptime / (3600 * 0.184))
     f_pix_err = (_F_ERR / 100) * 0.5 * (abs(ra_dot) + abs(dec_dot)) * (exptime / (3600 * 0.184))
     assert f_pix_err != 0
 
     print '  Theoretical focal length: {:.2f} +/- {:.2f}'.format(f_pix, f_pix_err)
     print '  Theoretical magnitude: {:.2f} +/- {:.2f}'.format(mean, magrange)
 
-    i_table = septable.iloc[i_list, :]  # row, column
+    print '-- Identifying object from nearest neighbours within {} pixels'.format(r_sig)
+    i_list, found = find_neighbours(transients, r_sig, p_x, p_y, f_pix, f_pix_err, expnum, object_name)
+    if not found:
+        with open('{}/no_object_found.txt'.format(output_dir), 'a') as infile:
+            infile.write('{}\t{}\t{}\t{}\t{}\n'.format(object_name, expnum, p_ra, p_dec, f_pix))
+        raise Exception
+
+    i_table = transients.iloc[i_list, :]  # row, column
 
     both_cond = i_table.query('({} < f < {}) & ({} < mag < {})'.format(f_pix - f_pix_err, f_pix + f_pix_err,
                                                                        mean - magrange, mean + magrange))
@@ -580,9 +589,8 @@ def iden_good_neighbours(expnum, i_list, septable, mag_list_jpl, ra_dot, dec_dot
         print "WARNING: No condition could be satisfied <<<<<<<<<<<<<<<<<<<<<<<<<<<<"
         print '  Nearest neighbours:'
         print i_table
-        print "  Mag mean, accepted error: {:.2f} {:.2f}".format(mean, magrange)
-        write_to_error_file(object_name, expnum, i_table, out_filename='no_iden.txt')
-        raise Exception
+        write_to_error_file(object_name, expnum, i_table, out_filename='no_cond_satif.txt')
+        return
 
 
 def add_to_object_table(table, first, second):
@@ -653,12 +661,10 @@ def check_involvement(object_data, catalogue, r_err, pvwcs, size_x, size_y):
     if len(cat_list) > 0:
         print ">> Object is involved <<<<<<<<<<<<<<<<<<<"
         print cat_list
-        involved = True
-        return involved
+        return True
     else:
         print '>> Object is not involved'
-        involved = False
-        return involved
+        return False
 
 
 def check_num_stars(num_objs, size, size_ccd, object_name, expnum_p, username, password, family_name):
@@ -666,17 +672,17 @@ def check_num_stars(num_objs, size, size_ccd, object_name, expnum_p, username, p
     r_old = size * 0.184 / 3600
     r_new = (size + 100) * 0.184 / 3600
 
-    x_max = float((size_ccd.split(',')[0]).split(':')[1])*0.184/3600
-    y_max = float(((size_ccd.split(',')[1]).split(':')[1]).strip(']'))*0.184/3600
+    x_max = float((size_ccd.split(',')[0]).split(':')[1]) * 0.184 / 3600
+    y_max = float(((size_ccd.split(',')[1]).split(':')[1]).strip(']')) * 0.184 / 3600
 
     assert r_new < y_max
-    if r_new > (900*0.184/3600):
-        r_new = (900*0.184/3600)
+    if r_new > (900 * 0.184 / 3600):
+        r_new = (900 * 0.184 / 3600)
 
     print '>> Number of objects in image: {}'.format(num_objs)
     if num_objs <= 30:
         print '  Not enough stars in the stamp <<<<<<<<<<<<<<<<<<< {} {}'.format(r_old, r_new)
-        if r_new != (900*0.184/3600):
+        if r_new != (900 * 0.184 / 3600):
             enough = False
             get_stamps.get_one_stamp(object_name, expnum_p, r_new, username, password, family_name)
 
@@ -696,10 +702,11 @@ def write_to_file(object_name, expnum_p, object_data, num_objs, start, out_filen
         with open('{}/{}'.format(output_dir, out_filename), 'a') as outfile:
             try:
                 for i in range(0, len(object_data)):
-                    outfile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
+                    outfile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
                         object_name, expnum_p, object_data['ra'][i], object_data['dec'][i], object_data['flux'][i],
                         object_data['mag'][i], object_data['x'][i], object_data['y'][i], num_objs, time_mjd,
-                        object_data['consistent_f'][i], object_data['consistent_mag'][i]))
+                        object_data['consistent_f'][i], object_data['consistent_mag'][i], object_data['diff_ra'][i],
+                        object_data['diff_dec'][i]))
             except Exception, e:
                 print "ERROR: cannot write to outfile {} <<<<<<<<<<<<".format(e)
 
@@ -708,13 +715,18 @@ def write_to_file(object_name, expnum_p, object_data, num_objs, start, out_filen
 
 
 def write_to_error_file(object_name, expnum, object_data, out_filename):
+    """
+    prints a list of nearest neighbours to an outfile for human inspection
+    """
+    object_data.reset_index(drop=True, inplace=True)
     with open('{}/{}'.format(output_dir, out_filename), 'a') as outfile:
         try:
-            for i in range(0, len(object_data)):
+            for i in range(len(object_data)):
                 outfile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
                     object_name, expnum, object_data['ra'][i], object_data['dec'][i], object_data['flux'][i],
                     object_data['mag'][i], object_data['x'][i], object_data['y'][i],
-                    object_data['consistent_f'][i], object_data['consistent_mag'][i]))
+                    object_data['diff_ra'][i], object_data['diff_dec'][i]))
+            outfile.write('\n')
         except Exception, e:
             print "ERROR: cannot write to outfile {} <<<<<<<<<<<<".format(e)
 
@@ -783,14 +795,16 @@ def add_day(date_range_t):
     else:
         day = day_add_one
     month = int(time_end_date[1])
+    year = int(time_end_date[0])
     if day > 27:
         day = 1
         if month == 12:
             month = 1
+            year += 1
         else:
             month += 1
 
-    time_end = '{}-{}-{} 00:00:00.0'.format(time_end_date[0], month, day)
+    time_end = '{}-{}-{} 00:00:00.0'.format(year, month, day)
     return time_end
 
 
