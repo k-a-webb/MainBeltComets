@@ -91,6 +91,10 @@ def find_objects_by_phot(family_name, object_name, ap, th, filter_type='r', imag
     If only a family name is given, does the same for all objects in that family
     """
 
+    # get CADC authentification
+    username = raw_input("CADC username: ")
+    password = getpass.getpass("CADC password: ")
+
     out_filename = '{}_r{}_t{}_output.txt'.format(family_name, ap, th)
     with open('{}/{}'.format(output_dir, out_filename), 'w') as outfile:
         outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(
@@ -123,12 +127,12 @@ def find_objects_by_phot(family_name, object_name, ap, th, filter_type='r', imag
     if object_name is None:
         for index, image_object in enumerate(image_list):
             print 'Finding asteroid {} in family {} '.format(object_name, family_name)
-            iterate_thru_images(family_name, image_object, expnum_list[index], ap, th)
+            iterate_thru_images(family_name, image_object, expnum_list[index], username, password, ap, th)
     else:
         for index, image_object in enumerate(image_list):
             if object_name == image_object:
                 print 'Finding asteroid {} in family {} '.format(object_name, family_name)
-                iterate_thru_images(family_name, object_name, expnum_list[index], ap, th)
+                iterate_thru_images(family_name, object_name, expnum_list[index], username, password, ap, th)
 
 
 def iterate_thru_images(family_name, object_name, expnum_p, username, password, ap, th):
@@ -142,7 +146,7 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
 
     try:
         print "-- Performing photometry on image {} ".format(expnum_p)
-        septable, header = get_fits_data(object_name, expnum_p, ap, th)
+        septable, header, data = get_fits_data(object_name, expnum_p, ap, th)
         exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_header_info(header)
 
     except Exception, e:
@@ -150,12 +154,12 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
             print "ERROR: {}".format(e)
             try:
                 print '>> Trying again with three times the threshold'
-                septable, header = get_fits_data(object_name, expnum_p, ap, th*3)
+                septable, header, data = get_fits_data(object_name, expnum_p, ap, th * 3)
                 exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_header_info(header)
-            except Exception, e:
+            except Exception:
                 write_to_error_file2(object_name, expnum_p, out_filename="phot_param_err.txt")
                 return True
-        elif ('PHOTZP' in e.message):
+        elif 'PHOTZP' in e.message:
             return False
         else:
             return True
@@ -167,7 +171,7 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
     except Exception, e:
         print 'ERROR: Error while doing JPL query, {}'.format(e)
         return True
-    except AssertionError, e:
+    except AssertionError:
         print 'Error in JPL query, no ephem start'
         return True
 
@@ -179,7 +183,7 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
         return success
 
     try:
-        good_neighbours, r_err = iden_good_neighbours(object_name, transients, septable, pvwcs, r_sig, p_ra, p_dec,
+        good_neighbours, r_err = iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
                                                       expnum_p, mag_list_jpl, ra_dot, dec_dot, exptime)
         if good_neighbours is None:
             return True
@@ -228,13 +232,13 @@ def get_fits_data(object_name, expnum_p, ap, th):
                         print hdulist.info()
                         if hdulist[0].data is None:
                             print 'IMAGE is mosaic'
-                            data1 = fits.getdata(file_path, 1)
+                            data = fits.getdata(file_path, 1)
                             data2 = fits.getdata(file_path, 2)
                             header = fits.getheader(file_path, 1)
 
                             print 'good until here'
 
-                            table1 = sep_phot(data1, ap, th)
+                            table1 = sep_phot(data, ap, th)
                             print 'this time it worked'
                             table2 = sep_phot(data2, ap, th)
                             table = vstack([table1, table2])
@@ -246,7 +250,7 @@ def get_fits_data(object_name, expnum_p, ap, th):
 
                     os.unlink('{}/{}'.format(stamps_dir, fits_file))
 
-                    return table, header
+                    return table, header, data
 
     except TypeError:
         print "WARNING: Image does not exist for {} {}".format(object_name, expnum_p)
@@ -290,7 +294,7 @@ def sep_phot(data, ap, th):
     # Measure a spatially variable background of some image data (np array)
     try:
         bkg = sep.Background(data)  # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
-    except ValueError, e:
+    except ValueError:
         data = data.byteswap(True).newbyteorder()
         bkg = sep.Background(data)  # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
 
@@ -481,13 +485,13 @@ def compare_to_catalogue(sep_table):
 
     if len(trans_list) == 0:
         print "WARNING: No transients identified"
-    transients = sep_table.irow(trans_list)
-    catalog_stars = sep_table.irow(cat_list)
+    transients = sep_table.loc[trans_list, :]
+    catalog_stars = sep_table.loc[cat_list, :]
 
     return transients, catalogue, cat_objs, catalog_stars
 
 
-def find_neighbours(transients, r_sig, p_x, p_y, f_pix, f_pix_err, expnum_p, object_name):
+def find_neighbours(transients, r_sig, p_x, p_y, expnum_p):
     found = True
 
     i_list = neighbour_search(transients, r_sig, p_x, p_y)
@@ -515,7 +519,7 @@ def neighbour_search(transients, r_sig, p_x, p_y):
     return i_list
 
 
-def iden_good_neighbours(object_name, transients, septable, pvwcs, r_sig, p_ra, p_dec,
+def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
                          expnum, mag_list_jpl, ra_dot, dec_dot, exptime):
     """
     Selects nearest neighbour object from predicted coordinates as object of interest
@@ -548,7 +552,7 @@ def iden_good_neighbours(object_name, transients, septable, pvwcs, r_sig, p_ra, 
     print '  Theoretical magnitude: {:.2f} +/- {:.2f}'.format(mean, magrange)
 
     print '-- Identifying object from nearest neighbours within {} pixels'.format(r_sig)
-    i_list, found = find_neighbours(transients, r_sig, p_x, p_y, f_pix, f_pix_err, expnum, object_name)
+    i_list, found = find_neighbours(transients, r_sig, p_x, p_y, expnum)
     if not found:
         with open('{}/no_object_found.txt'.format(output_dir), 'a') as infile:
             infile.write('{}\t{}\t{}\t{}\t{}\n'.format(object_name, expnum, p_ra, p_dec, f_pix))
@@ -668,6 +672,11 @@ def check_involvement(object_data, catalogue, r_err, pvwcs, size_x, size_y):
 
 
 def check_num_stars(num_objs, size, size_ccd, object_name, expnum_p, username, password, family_name):
+    """
+    Ensures that there are at least a given number fo catalogue stars in the postage stamp, if not cut out a larger
+    stamp. Stamp size is set to a maximm size due to sep failure for large number of objects
+    """
+
     enough = True
     r_old = size * 0.184 / 3600
     r_new = (size + 100) * 0.184 / 3600
@@ -675,17 +684,18 @@ def check_num_stars(num_objs, size, size_ccd, object_name, expnum_p, username, p
     x_max = float((size_ccd.split(',')[0]).split(':')[1]) * 0.184 / 3600
     y_max = float(((size_ccd.split(',')[1]).split(':')[1]).strip(']')) * 0.184 / 3600
 
-    assert r_new < y_max
-    if r_new > (900 * 0.184 / 3600):
-        r_new = (900 * 0.184 / 3600)
+    assert r_new < np.amax([x_max, y_max])
+    #if r_new > (900 * 0.184 / 3600):
+    #    r_new = (900 * 0.184 / 3600)
 
     print '>> Number of objects in image: {}'.format(num_objs)
+    '''
     if num_objs <= 30:
         print '  Not enough stars in the stamp <<<<<<<<<<<<<<<<<<< {} {}'.format(r_old, r_new)
         if r_new != (900 * 0.184 / 3600):
             enough = False
             get_stamps.get_one_stamp(object_name, expnum_p, r_new, username, password, family_name)
-
+    '''
     return r_new, r_old, enough
 
 
@@ -758,10 +768,12 @@ def init_dirs(family_name):
     Initiate global directories
     """
 
+    '''
     # initiate vos directories
-    global vos_dir2
+    global vos_dir
     vos_dir = '{}/{}'.format(_VOS_PATH, family_name)
     assert exists(vos_dir, force=True)
+    '''
 
     # initiate local directories
     global family_dir
