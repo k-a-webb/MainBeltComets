@@ -27,7 +27,7 @@ _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
 _DIR_PATH = '{}/asteroid_families'.format(_DIR_PATH_BASE)
 stamps_dir = '{}/all/all_stamps'.format(_DIR_PATH)
 
-_RADIUS = 0.03  # default radius of cutout
+_RADIUS = 0.01  # default radius of cutout
 _ERR_ELL_RAD = 15  # default radius of the error ellipse
 _MAG_ERR = 2  # default min range of magnitude from predicted by JPL
 _CAT_r_TOL = 5 * 0.184 / 3600  # Tolerance for error in RA DEC position from Stephens catalogue [pixels to degrees]
@@ -140,7 +140,6 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
     For a given family, object, and exposure number, get orbital information of the object in the image
     """
 
-    success = False
     # initiate directories
     init_dirs(family_name)
 
@@ -149,40 +148,13 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
         septable, header, data = get_fits_data(object_name, expnum_p, ap, th)
         exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_header_info(header)
 
-    except Exception, e:
-        if ('internal pixel buffer full' in e.message) or ('object deblending overflow' in e.message):
-            print "ERROR: {}".format(e)
-            try:
-                print '>> Trying again with three times the threshold'
-                septable, header, data = get_fits_data(object_name, expnum_p, ap, th * 3)
-                exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_header_info(header)
-            except Exception:
-                write_to_error_file2(object_name, expnum_p, out_filename="phot_param_err.txt")
-                return True
-        elif 'PHOTZP' in e.message:
-            return False
-        else:
-            return True
-
-    try:
         print "-- Querying JPL Horizon's ephemeris"
         mag_list_jpl, r_sig = get_mag_rad(family_name, object_name)
         p_ra, p_dec, ra_dot, dec_dot = get_coords(object_name, start, end)
-    except Exception, e:
-        print 'ERROR: Error while doing JPL query, {}'.format(e)
-        return True
-    except AssertionError:
-        print 'Error in JPL query, no ephem start'
-        return True
 
-    table = append_table(septable, pvwcs, zeropt, p_ra, p_dec)
-    transients, catalogue, num_cat_objs, catalog_stars = compare_to_catalogue(table)
-    r_new, r_old, enough = check_num_stars(num_cat_objs, size, size_ccd, object_name, expnum_p, username, password,
-                                           family_name)
-    if not enough:
-        return success
+        table = append_table(septable, pvwcs, zeropt, p_ra, p_dec)
+        transients, catalogue, catalog_stars = compare_to_catalogue(table)
 
-    try:
         good_neighbours, r_err = iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
                                                       expnum_p, mag_list_jpl, ra_dot, dec_dot, exptime)
         if good_neighbours is None:
@@ -194,10 +166,11 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
                 write_to_error_file2(object_name, expnum_p, out_filename='involved.txt')
                 return True
             else:
-                write_to_file(object_name, expnum_p, good_neighbours, num_cat_objs, start,
+                write_to_file(object_name, expnum_p, good_neighbours, start,
                               out_filename='{}_output.txt'.format(family_name))
                 print '-- Cutting out recentered postage stamp'
-                # cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, r_old, username, password)
+                # cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, _RADIUS, username, password)
+                return good_neighbours
 
         else:
             print '  More than one object identified <<<'
@@ -205,9 +178,16 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
 
     except Exception, e:
         print 'ERROR: {}'.format(e)
-        # get_stamps.get_one_stamp(objectname, expnum_p, r_new, username, password, familyname)
-
-    return True
+        if 'PHOTZP' in e.message:
+            get_stamps.get_one_stamp(object_name, expnum_p, _RADIUS, username, password, family_name)
+            return False
+        if 'NoneType' in e.message:
+            return False
+        else:
+            return True
+    except AssertionError:
+        print 'Error in JPL query, no ephem start'
+        return True
 
 
 def get_fits_data(object_name, expnum_p, ap, th):
@@ -228,25 +208,9 @@ def get_fits_data(object_name, expnum_p, ap, th):
                     file_path = '{}/{}'.format(stamps_dir, fits_file)
                     storage.copy('{}/{}'.format(vos_dir, fits_file), file_path)
 
-                    with fits.open('{}/{}'.format(stamps_dir, fits_file)) as hdulist:
-                        print hdulist.info()
-                        if hdulist[0].data is None:
-                            print 'IMAGE is mosaic'
-                            data = fits.getdata(file_path, 1)
-                            data2 = fits.getdata(file_path, 2)
-                            header = fits.getheader(file_path, 1)
-
-                            print 'good until here'
-
-                            table1 = sep_phot(data, ap, th)
-                            print 'this time it worked'
-                            table2 = sep_phot(data2, ap, th)
-                            table = vstack([table1, table2])
-
-                        else:
-                            data = fits.getdata(file_path)
-                            header = fits.getheader(file_path)
-                            table = sep_phot(data, ap, th)
+                    data = fits.getdata(file_path)
+                    header = fits.getheader(file_path)
+                    table = sep_phot(data, ap, th)
 
                     os.unlink('{}/{}'.format(stamps_dir, fits_file))
 
@@ -261,6 +225,7 @@ def get_fits_data(object_name, expnum_p, ap, th):
             raise
         else:
             print 'ERROR: {}'.format(e)
+            write_to_error_file2(object_name, expnum_p, out_filename="phot_param_err.txt")
             raise
 
 
@@ -411,9 +376,7 @@ def get_coords(object_name, time_start, time_end):
     ra_deg = c.ra.degree
     dec_deg = c.dec.degree
 
-    ra_dot = ra_dot_cos_dec / math.cos(math.radians(dec_deg))
-
-    return ra_deg, dec_deg, ra_dot, dec_dot
+    return ra_deg, dec_deg, ra_dot_cos_dec, dec_dot
 
 
 def append_table(table, pvwcs, zeropt, p_ra, p_dec):
@@ -463,7 +426,6 @@ def compare_to_catalogue(sep_table):
 
     catalogue.reset_index(drop=True, inplace=True)
 
-    cat_objs = 0
     trans_list = []
     cat_list = []
 
@@ -480,15 +442,15 @@ def compare_to_catalogue(sep_table):
             trans_list.append(row)
 
         else:
-            cat_objs += len(index)
             cat_list.append(row)
 
     if len(trans_list) == 0:
         print "WARNING: No transients identified"
+
     transients = sep_table.loc[trans_list, :]
     catalog_stars = sep_table.loc[cat_list, :]
 
-    return transients, catalogue, cat_objs, catalog_stars
+    return transients, catalogue, catalog_stars
 
 
 def find_neighbours(transients, r_sig, p_x, p_y, expnum_p):
@@ -671,35 +633,7 @@ def check_involvement(object_data, catalogue, r_err, pvwcs, size_x, size_y):
         return False
 
 
-def check_num_stars(num_objs, size, size_ccd, object_name, expnum_p, username, password, family_name):
-    """
-    Ensures that there are at least a given number fo catalogue stars in the postage stamp, if not cut out a larger
-    stamp. Stamp size is set to a maximm size due to sep failure for large number of objects
-    """
-
-    enough = True
-    r_old = size * 0.184 / 3600
-    r_new = (size + 100) * 0.184 / 3600
-
-    x_max = float((size_ccd.split(',')[0]).split(':')[1]) * 0.184 / 3600
-    y_max = float(((size_ccd.split(',')[1]).split(':')[1]).strip(']')) * 0.184 / 3600
-
-    assert r_new < np.amax([x_max, y_max])
-    #if r_new > (900 * 0.184 / 3600):
-    #    r_new = (900 * 0.184 / 3600)
-
-    print '>> Number of objects in image: {}'.format(num_objs)
-    '''
-    if num_objs <= 30:
-        print '  Not enough stars in the stamp <<<<<<<<<<<<<<<<<<< {} {}'.format(r_old, r_new)
-        if r_new != (900 * 0.184 / 3600):
-            enough = False
-            get_stamps.get_one_stamp(object_name, expnum_p, r_new, username, password, family_name)
-    '''
-    return r_new, r_old, enough
-
-
-def write_to_file(object_name, expnum_p, object_data, num_objs, start, out_filename):
+def write_to_file(object_name, expnum_p, object_data, start, out_filename):
     """
     Prints to outfile
     """
@@ -710,15 +644,12 @@ def write_to_file(object_name, expnum_p, object_data, num_objs, start, out_filen
         time_mjd = time_start.mjd
 
         with open('{}/{}'.format(output_dir, out_filename), 'a') as outfile:
-            try:
-                for i in range(0, len(object_data)):
-                    outfile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
-                        object_name, expnum_p, object_data['ra'][i], object_data['dec'][i], object_data['flux'][i],
-                        object_data['mag'][i], object_data['x'][i], object_data['y'][i], num_objs, time_mjd,
-                        object_data['consistent_f'][i], object_data['consistent_mag'][i], object_data['diff_ra'][i],
-                        object_data['diff_dec'][i]))
-            except Exception, e:
-                print "ERROR: cannot write to outfile {} <<<<<<<<<<<<".format(e)
+            for i in range(0, len(object_data)):
+                outfile.write('{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n'.format(
+                    object_name, expnum_p, object_data['ra'][i], object_data['dec'][i], object_data['flux'][i],
+                    object_data['mag'][i], object_data['x'][i], object_data['y'][i], time_mjd,
+                    object_data['consistent_f'][i], object_data['consistent_mag'][i], object_data['diff_ra'][i],
+                    object_data['diff_dec'][i], object_data['a'][i], object_data['b'][i], object_data['theta'][i]))
 
     else:
         print "WARNING: Could not identify object {} in image".format(object_name, expnum_p)
