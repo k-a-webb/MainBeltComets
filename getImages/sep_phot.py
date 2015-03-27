@@ -25,7 +25,9 @@ _VOS_PATH = 'vos:kawebb/postage_stamps'
 vos_dir = '{}/all'.format(_VOS_PATH)
 _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
 _DIR_PATH = '{}/asteroid_families'.format(_DIR_PATH_BASE)
-stamps_dir = '{}/all/all_stamps'.format(_DIR_PATH)
+_STAMPS_DIR = '{}/postage_stamps'
+_IMAGE_LISTS = '{}/image_lists'.format(_DIR_PATH_BASE)
+_OUTPUT_DIR = '{}/phot_output'.format(_DIR_PATH_BASE)
 
 _RADIUS = 0.01  # default radius of cutout
 _ERR_ELL_RAD = 15  # default radius of the error ellipse
@@ -95,19 +97,7 @@ def find_objects_by_phot(family_name, object_name, ap, th, filter_type='r', imag
     username = raw_input("CADC username: ")
     password = getpass.getpass("CADC password: ")
 
-    out_filename = '{}_r{}_t{}_output.txt'.format(family_name, ap, th)
-    with open('{}/{}'.format(output_dir, out_filename), 'w') as outfile:
-        outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(
-            'object', 'expnum', 'ra', 'dec', 'flux', 'mag', 'x', 'y', 'stars', 'time'))
-
-    # initiate directories
-    init_dirs(family_name)
-
-    # From the given input, identify the desired filter and rename appropriately
-    if filter_type.lower().__contains__('r'):
-        filter_type = 'r.MP9601'  # this is the old (standard) r filter for MegaCam
-    if filter_type.lower().__contains__('u'):
-        filter_type = 'u.MP9301'
+    image_list_path = '{}/{}_images.txt'.format(_IMAGE_LISTS, family_name)
 
     # Retrieve the predicted coordinates of the object
     if os.path.exists(image_list_path):
@@ -125,10 +115,22 @@ def find_objects_by_phot(family_name, object_name, ap, th, filter_type='r', imag
 
     # If object name is not specified, iterate through all objects in the family
     if object_name is None:
+        out_filename = '{}_phot.txt'.format(family_name)
+        with open('{}/{}'.format(_OUTPUT_DIR, out_filename), 'w') as outfile:
+            outfile.write("{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n".format(
+                'object', 'expnum', 'ra', 'dec', 'flux', 'mag', 'x', 'y', 'time', 'consistent_f',
+                'consistent_mag', 'diff_ra', 'diff_dec', 'a', 'b', 'theta'))
+
         for index, image_object in enumerate(image_list):
             print 'Finding asteroid {} in family {} '.format(object_name, family_name)
             iterate_thru_images(family_name, image_object, expnum_list[index], username, password, ap, th)
     else:
+        out_filename = '{}_{}_phot.txt'.format(family_name, object_name)
+        with open('{}/{}'.format(_OUTPUT_DIR, out_filename), 'w') as outfile:
+            outfile.write("{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n".format(
+                'object', 'expnum', 'ra', 'dec', 'flux', 'mag', 'x', 'y', 'time', 'consistent_f',
+                'consistent_mag', 'diff_ra', 'diff_dec', 'a', 'b', 'theta'))
+
         for index, image_object in enumerate(image_list):
             if object_name == image_object:
                 print 'Finding asteroid {} in family {} '.format(object_name, family_name)
@@ -140,9 +142,6 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
     For a given family, object, and exposure number, get orbital information of the object in the image
     """
 
-    # initiate directories
-    init_dirs(family_name)
-
     try:
         print "-- Performing photometry on image {} ".format(expnum_p)
         septable, header, data = get_fits_data(object_name, expnum_p, ap, th)
@@ -150,7 +149,7 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
 
         print "-- Querying JPL Horizon's ephemeris"
         mag_list_jpl, r_sig = get_mag_rad(family_name, object_name)
-        p_ra, p_dec, ra_dot, dec_dot = get_coords(object_name, start, end)
+        p_ra, p_dec, ra_dot, dec_dot = get_coords(str(object_name), start, end)
 
         table = append_table(septable, pvwcs, zeropt, p_ra, p_dec)
         transients, catalogue, catalog_stars = compare_to_catalogue(table)
@@ -205,14 +204,14 @@ def get_fits_data(object_name, expnum_p, ap, th):
                 expnum_file = fits_file.split('_')[1]
 
                 if (expnum_file == expnum_p) and (objectname_file == object_name):
-                    file_path = '{}/{}'.format(stamps_dir, fits_file)
+                    file_path = '{}/{}'.format(_STAMPS_DIR, fits_file)
                     storage.copy('{}/{}'.format(vos_dir, fits_file), file_path)
 
                     data = fits.getdata(file_path)
                     header = fits.getheader(file_path)
                     table = sep_phot(data, ap, th)
 
-                    os.unlink('{}/{}'.format(stamps_dir, fits_file))
+                    os.unlink('{}/{}'.format(_STAMPS_DIR, fits_file))
 
                     return table, header, data
 
@@ -310,7 +309,7 @@ def get_mag_rad(family_name, object_name):
 
     # from familyname_images.txt get date range of images for objectname
     date_range = []
-    with open('asteroid_families/{}/{}_images.txt'.format(family_name, family_name)) as infile:
+    with open('{}/{}_images.txt'.format(_IMAGE_LISTS, family_name)) as infile:
         for line in infile.readlines()[1:]:
             if len(line.split()) > 0:
                 if object_name == line.split()[0]:
@@ -352,9 +351,7 @@ def get_coords(object_name, time_start, time_end):
     Queries the JPL Horizon's ephemeris for rate of change of RA and DEC for a specific day
     """
 
-    if type(object_name) is not str:
-        object_name = str(object_name)
-
+    assert type(object_name) is str
     orbital_elements, ephemerides = batch(object_name, time_start, time_end, step=1, su='m', params=[1, 3])
     # ephemerides = query_jpl(object_name, time_start, time_end, params=[1, 3], step='1', su='m')
 
@@ -453,7 +450,7 @@ def compare_to_catalogue(sep_table):
     return transients, catalogue, catalog_stars
 
 
-def find_neighbours(transients, r_sig, p_x, p_y, expnum_p):
+def find_neighbours(transients, r_sig, p_x, p_y):
     found = True
 
     i_list = neighbour_search(transients, r_sig, p_x, p_y)
@@ -462,7 +459,6 @@ def find_neighbours(transients, r_sig, p_x, p_y, expnum_p):
         i_list = neighbour_search(transients, 2 * r_sig, p_x, p_y)
         if len(i_list) == 0:
             print 'WARNING: No nearest neighbours were found within {} ++++++++++++++++++++++'.format(r_sig * 1.5)
-            transients.to_csv('asteroid_families/temp_phot_files/{}_phot.txt'.format(expnum_p), sep='\t')
             found = False
 
     return i_list, found
@@ -476,7 +472,7 @@ def neighbour_search(transients, r_sig, p_x, p_y):
 
     # parse through table and get RA and DEC closest to predicted coordinates (in pixels)
     coords = np.array([p_x, p_y])
-    i_list = tree.query_ball_point(coords, r_sig)
+    i_list = tree.query_ball_point(coords, r_sig, )
 
     return i_list
 
@@ -514,9 +510,9 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
     print '  Theoretical magnitude: {:.2f} +/- {:.2f}'.format(mean, magrange)
 
     print '-- Identifying object from nearest neighbours within {} pixels'.format(r_sig)
-    i_list, found = find_neighbours(transients, r_sig, p_x, p_y, expnum)
+    i_list, found = find_neighbours(transients, r_sig, p_x, p_y)
     if not found:
-        with open('{}/no_object_found.txt'.format(output_dir), 'a') as infile:
+        with open('{}/no_object_found.txt'.format(_OUTPUT_DIR), 'a') as infile:
             infile.write('{}\t{}\t{}\t{}\t{}\n'.format(object_name, expnum, p_ra, p_dec, f_pix))
         raise Exception
 
@@ -643,7 +639,7 @@ def write_to_file(object_name, expnum_p, object_data, start, out_filename):
         time_start = Time(start, format='iso')
         time_mjd = time_start.mjd
 
-        with open('{}/{}'.format(output_dir, out_filename), 'a') as outfile:
+        with open('{}/{}'.format(_OUTPUT_DIR, out_filename), 'a') as outfile:
             for i in range(0, len(object_data)):
                 outfile.write('{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n'.format(
                     object_name, expnum_p, object_data['ra'][i], object_data['dec'][i], object_data['flux'][i],
@@ -660,7 +656,7 @@ def write_to_error_file(object_name, expnum, object_data, out_filename):
     prints a list of nearest neighbours to an outfile for human inspection
     """
     object_data.reset_index(drop=True, inplace=True)
-    with open('{}/{}'.format(output_dir, out_filename), 'a') as outfile:
+    with open('{}/{}'.format(_OUTPUT_DIR, out_filename), 'a') as outfile:
         try:
             for i in range(len(object_data)):
                 outfile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
@@ -677,7 +673,7 @@ def write_to_error_file2(object_name, expnum, out_filename):
     Write image information to out file
     """
 
-    with open('{}/{}'.format(output_dir, out_filename), 'a') as outfile:
+    with open('{}/{}'.format(_OUTPUT_DIR, out_filename), 'a') as outfile:
         try:
             outfile.write('{}\t{}\n'.format(object_name, expnum))
 
@@ -692,37 +688,6 @@ def cut_centered_stamp(family_name, object_name, expnum_p, object_data, r_old, u
         print '-- Cutting recentered stamp'
         get_stamps.centered_stamp(object_name, expnum_p, r_old, object_data[0][5], object_data[0][6], username,
                                   password, family_name)
-
-
-def init_dirs(family_name):
-    """
-    Initiate global directories
-    """
-
-    '''
-    # initiate vos directories
-    global vos_dir
-    vos_dir = '{}/{}'.format(_VOS_PATH, family_name)
-    assert exists(vos_dir, force=True)
-    '''
-
-    # initiate local directories
-    global family_dir
-    family_dir = '{}/{}'.format(_DIR_PATH, family_name)
-    assert os.path.isdir(family_dir)
-
-    global output_dir
-    output_dir = '{}/phot_output'.format(family_dir)
-    if not os.path.isdir(output_dir):
-        os.makedirs(output_dir)
-
-    global stamps_dir
-    stamps_dir = '{}/{}_stamps'.format(family_dir, family_name)
-    if not os.path.isdir(stamps_dir):
-        os.makedirs(stamps_dir)
-
-    global image_list_path
-    image_list_path = '{}/{}/{}_images.txt'.format(_DIR_PATH, family_dir, family_name)
 
 
 def add_day(date_range_t):
