@@ -18,7 +18,9 @@ from ossos_scripts import util
 
 _TARGET = "TARGET"
 _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
-dir_path_base = '{}/asteroid_families'.format(_DIR_PATH_BASE)
+_IMAGE_LISTS = '{}/image_lists'.format(_DIR_PATH_BASE)
+_VOS_PATH = 'vos:kawebb/postage_stamps'
+_STAMPS_DIR = '{}/postage_stamps'.format(_DIR_PATH_BASE)
 
 BASEURL = "http://www.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/vospace/auth/synctrans"
 
@@ -46,49 +48,67 @@ def main():
                         help="The input .txt files of astrometry/photometry measurements.")
     parser.add_argument("--radius", '-r',
                         action='store',
-                        default=0.01,
+                        default=0.02,
                         help='Radius (degree) of circle of cutout postage stamp.')
-    parser.add_argument("--suffix", '-s',
-                        action='store',
-                        default=None,
-                        help='Suffix of mba without family designation')
+
     args = parser.parse_args()
 
     # CADC PERMISSIONS
     username = raw_input("CADC username: ")
     password = getpass.getpass("CADC password: ")
 
-    get_stamps(args.family, username, password, args.radius, args.suffix)
+    get_stamps(str(args.family), username, password, args.radius)
 
 
-def get_stamps(familyname, username, password, radius, suffix):
-    init_dirs(familyname)
+def get_stamps(familyname, username, password, radius):
+    """
+    Cutout postage stamps of objects from VOSpace OSSOS mosaic, upload to VOSpace again
+    """
+
+    if familyname == none:
+        vos_dir = '{}/none'.format(_VOS_PATH)
+    else:
+        vos_dir = '{}/all'.format(_VOS_PATH)
 
     print "----- Cutting postage stamps of objects in family {} -----".format(familyname)
 
-    if suffix is None:
-        image_list_path = 'asteroid_families/{}/{}_images.txt'.format(familyname, familyname)
-    else:
-        image_list_path = 'asteroid_families/{}/{}_images_{}.txt'.format(familyname, familyname, suffix)
-
-    table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['object', 'expnum', 'ra', 'dec'],
-                          sep=' ', dtype={'Object': object})
+    image_list_path = '{}/{}_images.txt'.format(_IMAGE_LISTS, familyname)
+    try:
+        table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['object', 'expnum', 'ra', 'dec'],
+                              sep=' ', dtype={'Object': object, 'Image': object})
+    except pd.parser.CParserError:
+        table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['object', 'expnum', 'ra', 'dec'],
+                              sep='\t', dtype={'Object': object, 'Image': object})
 
     for row in range(len(table)):
-        postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(table['object'][row], table['expnum'][row],
-                                                                 table['ra'][row], table['dec'][row])
+        postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(table['object'][row],
+                                                                 table['expnum'][row],
+                                                                 table['ra'][row],
+                                                                 table['dec'][row])
         if storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)):
             print "  Stamp already exists"
         else:
             cutout(username, password, familyname, table['object'][row], table['expnum'][row], table['ra'][row],
                    table['dec'][row], radius)
 
+
 def get_one_stamp(object_name, expnum, radius, username, password, familyname):
-    init_dirs(familyname)
+    """
+    Pull stamp from VOSpace for a specific object in an exposure
+    """
 
     print "-- Cutting postage stamps of {} {}".format(object_name, expnum)
 
-    image_list = '{}/{}_images.txt'.format(family_dir, familyname)
+    if familyname == 'none':
+        vos_dir = '{}/none'.format(_VOS_PATH)
+    else:
+        vos_dir = '{}/all'.format(_VOS_PATH)
+
+    try:
+        image_list = '{}/{}_images.txt'.format(_IMAGE_LISTS, familyname)
+    except:
+        image_list, expnum_list, ra_list, dec_list = get_image_info(familyname, filtertype='r', imagetype='p')
+
     with open(image_list) as infile:
         for line in infile.readlines()[1:]:  # skip header info
             if len(line.split()) > 0:
@@ -100,10 +120,12 @@ def get_one_stamp(object_name, expnum, radius, username, password, familyname):
                 if (expnum == expnum_file) & (object_name == object_name_file):
 
                     postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(object_name, expnum, ra, dec)
-                    storage.remove('vos:kawebb/postage_stamps/{}/{}'.format(familyname, postage_stamp_filename))
-                    file_path = '{}/{}_stamps/{}'.format(family_dir, familyname, postage_stamp_filename)
+                    storage.remove('{}/{}'.format(vos_dir, postage_stamp_filename))
+
+                    file_path = '{}/{}'.format(_STAMPS_DIR, postage_stamp_filename)
                     if os.path.exists(file_path):
                         os.remove(file_path)
+
                     cutout(username, password, familyname, object_name, expnum, ra, dec, radius)
                     return
 
@@ -141,11 +163,10 @@ def cutout(username, password, family_name, object_name, image, ra, dec, radius,
     dec = 11.8697277778
     """
 
-    init_dirs(family_name)
-
-    output_dir = 'asteroid_families/{}/{}_stamps'.format(family_name, family_name)
-    if not os.path.isdir(output_dir):
-        os.makedirs(output_dir)
+    if family_name == 'none':
+        vos_dir = '{}/none'.format(_VOS_PATH)
+    else:
+        vos_dir = '{}/all'.format(_VOS_PATH)
 
     this_cutout = "CIRCLE ICRS {} {} {}".format(ra, dec, 2 * 0.18 / 3600.0)
     print "  cut out: {}".format(this_cutout)
@@ -203,26 +224,13 @@ def cutout(username, password, family_name, object_name, image, ra, dec, radius,
     cutout_fobj = fits.PrimaryHDU(data=cutout_fobj.data, header=cutout_fobj.header)
 
     postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(object_name, image, float(ra), float(dec))
-    cutout_fobj.writeto("{}/{}".format(output_dir, postage_stamp_filename), clobber=True)
+    cutout_fobj.writeto("{}/{}".format(_STAMPS_DIR, postage_stamp_filename), clobber=True)
     del cutout_fobj
     if test:
         return
-    storage.copy('{}/{}'.format(output_dir, postage_stamp_filename),
+    storage.copy('{}/{}'.format(_STAMPS_DIR, postage_stamp_filename),
                  '{}/{}'.format(vos_dir, postage_stamp_filename))
     os.unlink('{}/{}'.format(output_dir, postage_stamp_filename))
-
-
-def init_dirs(familyname):
-
-    global family_dir
-    family_dir = os.path.join(dir_path_base, familyname)
-    if not os.path.isdir(family_dir):
-        print "Invalid family name or directory does not exist"
-
-    global vos_dir
-    vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
-    if not storage.exists(vos_dir, force=True):
-        storage.mkdir(vos_dir)
 
 
 if __name__ == '__main__':

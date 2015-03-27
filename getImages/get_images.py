@@ -9,7 +9,9 @@ import time
 import pandas as pd
 import find_family
 
-dir_path_base = '/Users/admin/Desktop/MainBeltComets/getImages/asteroid_families'
+_DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
+_FAMILY_LISTS = '{}/family_lists'.format(_DIR_PATH_BASE)
+_OUTPUT_DIR = '{}/image_lists'.format(_DIR_PATH_BASE)
 
 
 def main():
@@ -39,10 +41,10 @@ def main():
 
     args = parser.parse_args()
 
-    get_image_info(args.family, args.filter, args.type, args.suffix)
+    get_image_info(str(args.family), args.filter, args.type, args.suffix)
 
 
-def get_image_info(familyname, filtertype='r', imagetype='p', suffix=None):
+def get_image_info(familyname, filtertype='r', imagetype='p'):
     """
     Query the ssois ephemeris for images of objects in a given family. Then parse through for desired image type, 
     filter, exposure time, and telescope instrument
@@ -53,20 +55,19 @@ def get_image_info(familyname, filtertype='r', imagetype='p', suffix=None):
         search=bynameMPC; epoch1=2013+01+01; epoch2=2015+1+16; eellipse=; eunits=arcseconds; extres=yes; xyres=yes; format=tsv
     """
 
-    print suffix
-    if suffix is not None:
-        family_list = '{}/none_family_{}.txt'.format(family_dir, suffix)
-        output = '{}_images_{}_1.txt'.format(familyname, suffix)
-    else:
-        family_list = '{}/{}_family.txt'.format(family_dir, familyname)
-        output = '{}_images.txt'.format(familyname)
+    # establish input/output
+    family_list = '{}/{}_family.txt'.format(_FAMILY_LISTS, familyname)
+    output = '{}/{}_images.txt'.format(_OUTPUT_DIR, familyname)
 
-    if os.exists(family_list):
+    if os.path.exists(family_list):
         with open(family_list) as infile:
             filestr = infile.read()
         object_list = filestr.split('\n')  # array of objects to query
     else:
-        object_list = find_family.find_family_members(familyname)
+        if familyname == 'all':
+            object_list = find_family.get_all_families_list()
+        else:
+            object_list = find_family.find_family_members(familyname)
 
     # From the given input, identify the desired filter and rename appropriately
     if filtertype.lower().__contains__('r'):
@@ -79,20 +80,18 @@ def get_image_info(familyname, filtertype='r', imagetype='p', suffix=None):
     search_end_date = Time('2017-01-01', scale='utc')  # epoch2=2017+1+1
 
     # Setup output, label columns
-    with open('{}/{}'.format(family_dir, output), 'w') as outfile:
+    with open(output, 'w') as outfile:
         outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(
             "Object", "Image", "Exp_time", "RA", "DEC", "time", "filter"))
 
-    print "-------------------- \n Searching for images of objects in family {} from CFHT/Megacam from the MPC ephemeris".format(
-        familyname)
-    print " with filter {} and exposure time of 287, 387, 500 seconds (OSSOS data) \n--------------------".format(
-        filtertype)
+    print "----- \n Searching for images of objects in family {} from CFHT/Megacam from the MPC ephemeris".format(familyname)
+    print " with filter {} and exposure time of 287, 387, 500 seconds (OSSOS data) \n-----".format(filtertype)
 
     image_list = []
     expnum_list = []
     ra_list = []
     dec_list = []
-    for object_name in object_list[:len(object_list) - 1]:
+    for object_name in object_list[459:len(object_list) - 1]: # skip header lines
         query = Query(object_name, search_start_date=search_start_date, search_end_date=search_end_date)
 
         try:
