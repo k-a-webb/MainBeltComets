@@ -27,11 +27,11 @@ from ossos import daophot
 from ossos import storage
 import sep_phot
 
-_VOS_DIR = 'vos:kawebb/postage_stamps/all'
+_VOS_DIR = 'vos:kawebb/postage_stamps'
 _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
-_DIR_PATH = '{}/asteroid_families'.format(_DIR_PATH_BASE)
-_STAMPS_DIR = '{}/434/434_stamps'.format(_DIR_PATH)
+_STAMPS_DIR = '{}/postage_stamps'.format(_DIR_PATH_BASE)
 _OSSOS_PATH_BASE = 'vos:OSSOS/dbimages'
+_PHOT_DIR = '{}/phot_output'.format(_DIR_PATH_BASE)
 
 _CCD = 'EXTNAME'
 _ZMAG = 'PHOTZP'
@@ -54,7 +54,7 @@ def main():
                         the orbital elements of the object')
     parser.add_argument("--family", '-f',
                         action="store",
-                        default='all',
+                        default='434',
                         help="Asteroid family name. Usually the asteroid number of the largest member.")
     parser.add_argument("--object", '-o',
                         action='store',
@@ -69,67 +69,70 @@ def main():
 
     # detect_mbc(args.family, args.object, args.expnum)
 
-    table = pd.read_table('{}/434/phot_output/434_output_test.txt'.format(_DIR_PATH), sep=' ', dtype={'object': object})
+    table = pd.read_table('{}/434/434_output_test.txt'.format(_PHOT_DIR), sep=' ', dtype={'object': object})
 
-    for i in range(0, 5):  # len(input)):
+    for i in range(5, 6):  # len(input)):
 
         detect_mbc('434', table['object'][i], table['expnum'][i], i)
+        print '\n'
 
 
 def detect_mbc(family_name, object_name, expnum, i):
     """
     Compare psf of asteroid with mean of stars to detect possible comae
     """
-    phot_output_file = '{}/{}/phot_output/{}_output_test.txt'.format(_DIR_PATH, family_name, family_name)
+    phot_output_file = '{}/{}/{}_output_test.txt'.format(_PHOT_DIR, family_name, family_name)
     phot_output_table = pd.read_table(phot_output_file, sep=' ', dtype={'object': object})
     asteroid_id = phot_output_table.query('object == "{}" & expnum == "{}"'.format(object_name, expnum))
     print 'buffers: ', _BUFFER1, _BUFFER2
     print asteroid_id
 
-    header, data = fits_data(object_name, expnum)
+    header, data = fits_data(object_name, expnum, family_name)
     bkg = get_bkg(data)
 
-    ossos_path = '{}/{}/{}'.format(_OSSOS_PATH_BASE, expnum.strip('p'), header[_CCD])
-    file_fwhm = '{}{}.fwhm'.format(expnum, header[_CCD].split('d')[1])
-    #with storage.open_vos_or_local(file_fwhm) as infile:
-    #    fwhm = float(infile.readline)
-    storage.copy('{}/{}'.format(ossos_path, file_fwhm), '{}/{}'.format(_STAMPS_DIR, file_fwhm))
-    with open('{}/{}'.format(_STAMPS_DIR, file_fwhm)) as infile:
-        fwhm = float(infile.readline())
-
-    print fwhm
-
-    '''
     target = header[_TARGET]
     if 'BH' not in target:
         print '-- NOT in H Block'
         return
-    '''
+
+    ossos_path = '{}/{}/{}'.format(_OSSOS_PATH_BASE, expnum.strip('p'), header[_CCD])
+    file_fwhm = '{}{}.fwhm'.format(expnum, header[_CCD].split('d')[1])
+    # with storage.open_vos_or_local(file_fwhm) as infile:
+    # fwhm = float(infile.readline)
+    storage.copy('{}/{}'.format(ossos_path, file_fwhm), '{}/{}'.format(_STAMPS_DIR, file_fwhm))
+    with open('{}/{}'.format(_STAMPS_DIR, file_fwhm)) as infile:
+        fwhm = float(infile.readline())
 
     print '-- Getting asteroid data'
     ast_data, x_ast = get_asteroid_data(asteroid_id, data, i, fwhm, bkg)
+
     print '-- Getting star data'
     star_data, x_star = get_star_data(expnum, header, asteroid_id)
 
     print '-- Mean star fit'
-    meas_psf(star_data, x_star, amp=100, sigma=5.)
+    meas_psf(star_data, x_star, amp=100, sigma=5., alpha=1.)
     print '-- Asteroid fit'
-    meas_psf(ast_data, x_ast, amp=100, sigma=10.)
+    meas_psf(ast_data, x_ast, amp=100, sigma=12., alpha=10.)
 
 
-def fits_data(object_name, expnum):
+def fits_data(object_name, expnum, family_name):
     """
     Creates local copy of fits file from VOSpace
     """
 
-    assert storage.exists(_VOS_DIR)
-    for fits_file in client.listdir(_VOS_DIR):  # images named with convention: object_expnum_RA_DEC.fits
+    if family_name == 'none':
+        vos_dir = '{}/none'.format(_VOS_DIR)
+    else:
+        vos_dir = '{}/all'.format(_VOS_DIR)
+
+    assert storage.exists(vos_dir)
+    for fits_file in client.listdir(vos_dir):  # images named with convention: object_expnum_RA_DEC.fits
 
         if fits_file.endswith('.fits'):
             objectname_file = fits_file.split('_')[0]
             expnum_file = fits_file.split('_')[1]
             if (expnum_file == expnum) and (objectname_file == object_name):
-                storage.copy('{}/{}'.format(_VOS_DIR, fits_file), '{}/{}'.format(_STAMPS_DIR, fits_file))
+                storage.copy('{}/{}'.format(vos_dir, fits_file), '{}/{}'.format(_STAMPS_DIR, fits_file))
                 file_path = '{}/{}'.format(_STAMPS_DIR, fits_file)
 
                 with fits.open(file_path) as hdulist:
@@ -175,7 +178,8 @@ def get_star_data(expnum, header, object_data):
     with fits.open(local_file_path) as hdulist:
         data = hdulist[0].data
 
-    data_masked = remove_saturated_rows(data, 117)
+    # data_masked = remove_saturated_rows(data, 117)
+    data_masked = data
 
     th = math.degrees(object_data['theta'].values)
     data_rot = rotate(data_masked, th)
@@ -218,8 +222,9 @@ def get_asteroid_data(object_data, data, i, fwhm, bkg):
 
     # reject any object too bright that will definetly be saturated
     mag = object_data['mag'].values
-    if mag < 15.5:
+    if mag < 18.5:
         print '>> Object is too bright for accurate photometry'
+        raise Exception
 
     data_cutout = cutout_data(object_data, data, fwhm, bkg)
 
@@ -233,7 +238,6 @@ def get_asteroid_data(object_data, data, i, fwhm, bkg):
         sum_col = np.ma.sum(data_cutout[row])
         if sum_col != 0.0:
             totaled.append(sum_col)
-    print totaled
 
     # shift the baseline to zero
     zeroed = []
@@ -282,18 +286,19 @@ def cutout_data(object_data, data, fwhm, bkg):
     print 'saturation level, bkg: ', bkg * _SATURATION_LEVEL, bkg
     data_masked = remove_saturated_rows(data_obj, bkg * _SATURATION_LEVEL)
 
-    # rotate the data about the angle of elongation, and cut into a square again
+    # rotate the data about the angle of elongation, semi major axis is along x as reading out rows (not columsn)
     data_rot = pd.DataFrame(data=rotate(data_masked, th))
 
     rows, cols = data_rot.shape
-    # cx2 = int(cols / 2)
+    cx2 = int(cols / 2)
     cy2 = int(rows / 2)
 
     ell_buffer = _BUFFER1 * fwhm
     print 'buffer, fwhm: ', ell_buffer, fwhm
 
+    '''
+    # make a mask the shape of the ellipse THIS IS NOT RECCOMMENDED, NEED CORNER BACKGROUND FLUX
     y_range = range(cy2 - int(b + ell_buffer), cy2 + int(b + ell_buffer))
-
     mask = np.zeros((rows, cols))
     for y in y_range:
         x1 = int(cy2 - float(a + ell_buffer + 1) * (1. - (y - cy2) ** 2 / (b + ell_buffer + 1) ** 2) ** 0.5)
@@ -301,11 +306,20 @@ def cutout_data(object_data, data, fwhm, bkg):
         for x in range(x1, x2):
             mask[y][x] = 1
 
-    data_cutout = np.multiply(data_rot, mask)
-    # np.savetxt('mask.txt', mask, fmt='%.0e')
-    np.savetxt('data_cutout.txt', data_cutout, fmt='%.0e')
+    data_cutout = (np.multiply(data_rot, mask)).values
+    '''
 
-    return data_cutout.values
+    # instead of ellipse, try cutting out rectangle
+    x_min2 = cx2 - (a + ell_buffer)
+    x_max2 = cx2 + (a + ell_buffer)
+    y_min2 = cy2 - (b + ell_buffer)
+    y_max2 = cy2 + (a + ell_buffer)
+    data_cutout = (data_rot.values)[y_min2:y_max2, x_min2:x_max2]
+
+    # np.savetxt('mask.txt', mask, fmt='%.0e')
+    np.savetxt('data_cutout.txt', data_cutout)  # , fmt='%.0e')
+
+    return data_cutout
 
 
 def remove_saturated_rows(data, sat_level):
@@ -326,15 +340,15 @@ def remove_saturated_rows(data, sat_level):
 
         if np.ma.sum(sat_masked) > 3 * sat_level:
             satur_row.append(row)
-            mask_row = np.ones(len(data_row), dtype=bool)
+            mask_row = np.zeros(len(data_row))
         else:
-            mask_row = np.zeros(len(data_row), dtype=bool)
+            mask_row = np.ones(len(data_row))
 
         mask.append(mask_row)
 
     mask_arr = np.asarray(mask)
     print 'saturated rows: ', satur_row
-    data_masked = np.ma.masked_array(data, mask_arr)
+    data_masked = np.multiply(data, mask_arr)
 
     # data_pd.drop(data_pd.index[satur_row])
     # print data_pd
@@ -343,7 +357,6 @@ def remove_saturated_rows(data, sat_level):
 
 
 def get_bkg(data):
-
     data2 = np.ones(data.shape)
     np.copyto(data2, data)
     try:
@@ -356,7 +369,7 @@ def get_bkg(data):
     return bkg
 
 
-def meas_psf(data_obj, x, amp, sigma):
+def meas_psf(data_obj, x, amp, sigma, alpha):
     """
     Apply a fit to the point spread function and return parameters of fit
     """
@@ -368,54 +381,62 @@ def meas_psf(data_obj, x, amp, sigma):
     print x
     print len(x), len(data_obj)
 
-    fitparams, fitcovariances = curve_fit(gauss, x, data_obj, p0=[amp, mid_pt, sigma, 0.])
-    perr = np.sqrt(np.diag(fitcovariances))
+    try:
 
-    fitparams2, fitcovariances2 = curve_fit(moffat, x, data_obj, p0=[amp, mid_pt, sigma, 1., 0.])
-    perr2 = np.sqrt(np.diag(fitcovariances2))
+        fitparams, fitcovariances = curve_fit(gauss, x, data_obj, p0=[amp, mid_pt, sigma])
+        perr = np.sqrt(np.diag(fitcovariances))
 
-    fitparams3, fitcovariances3 = curve_fit(lorentz, x, data_obj, p0=[amp, mid_pt, 1.])
-    perr3 = np.sqrt(np.diag(fitcovariances3))
+        fitparams2, fitcovariances2 = curve_fit(moffat, x, data_obj, p0=[amp, mid_pt, sigma, alpha])
+        perr2 = np.sqrt(np.diag(fitcovariances2))
 
-    # fitparams4, fitcovariances4 = curve_fit(penny, x, data_obj, p0=[1.5, mid_pt, 7., 10.])
-    # perr4 = np.sqrt(np.diag(fitcovariances4))
+        # fitparams3, fitcovariances3 = curve_fit(lorentz, x, data_obj, p0=[amp, mid_pt, 1.])
+        # perr3 = np.sqrt(np.diag(fitcovariances3))
 
-    print fitparams, perr
-    print fitparams2, perr2
-    print fitparams3, perr3
-    # print fitparams4, perr4
+        # fitparams4, fitcovariances4 = curve_fit(penny, x, data_obj, p0=[1.5, mid_pt, 7., 10.])
+        # perr4 = np.sqrt(np.diag(fitcovariances4))
 
-    x2 = range(x[0], x[-1])
+        print fitparams, perr
+        print fitparams2, perr2
+        # print fitparams3, perr3
+        # print fitparams4, perr4
 
-    gauss_fit = fitparams[0] * np.exp(-(x2 - fitparams[1]) ** 2 / (2. * fitparams[2] ** 2)) + fitparams[3]
+        x2 = range(x[0], x[-1])
 
-    moffat_fit = fitparams2[0] * (1 + (x2 - fitparams2[1]) ** 2 / fitparams2[2] ** 2) ** (
-        -fitparams2[3]) + fitparams2[4]
+        gauss_fit = fitparams[0] * np.exp(-(x2 - fitparams[1]) ** 2 / (2. * fitparams[2] ** 2))
 
-    lorentz_fit = (fitparams3[0] * np.ones(len(x2))) / (
-        1 + (x2 / (fitparams3[1] * np.ones(len(x2)))) ** 2 + x2 * (fitparams3[2] * np.ones(len(x2))))
+        moffat_fit = fitparams2[0] * (1 + (x2 - fitparams2[1]) ** 2 / fitparams2[2] ** 2) ** (
+            -fitparams2[3])
 
-    # penny_fit = fitparams4[0] * ((1. - fitparams4[2]) / (1. + (x / fitparams4[1]) ** 2 + fitparams4[2] * np.exp(-0.63 * x ** 2 / fitparams4[1] ** 2 + x * fitparams4[3])))
+        # lorentz_fit = (fitparams3[0] * np.ones(len(x2))) / (
+        # 1 + (x2 / (fitparams3[1] * np.ones(len(x2)))) ** 2 + x2 * (fitparams3[2] * np.ones(len(x2))))
 
-    with sns.axes_style('ticks'):
-        plt.plot(x, data_obj, label='Object psf')
-        plt.scatter(x, data_obj, label='Object psf')
-        plt.plot(x, gauss_fit, label='Gauss fit', ls='--')
-        plt.plot(x, moffat_fit, label='Moffat fit', ls=':')
-        plt.plot(x, lorentz_fit, label='Lorentz fit', ls='-.')
-        # plt.plot(x, penny_fit, label='Penny fit', ls='-.')
-        plt.legend()
-        plt.show()
+        # penny_fit = fitparams4[0] * ((1. - fitparams4[2]) / (1. + (x / fitparams4[1]) ** 2 + fitparams4[2] * np.exp(-0.63 * x ** 2 / fitparams4[1] ** 2 + x * fitparams4[3])))
+
+        with sns.axes_style('ticks'):
+            plt.plot(x, data_obj, label='Object psf')
+            plt.plot(x2, gauss_fit, label='Gauss fit', ls='--')
+            plt.plot(x2, moffat_fit, label='Moffat fit', ls=':')
+            # plt.plot(x2, lorentz_fit, label='Lorentz fit', ls='-.')
+            # plt.plot(x, penny_fit, label='Penny fit', ls='-.')
+            plt.legend()
+            plt.show()
+
+    except Exception, e:
+        print 'ERROR: ', e
+        with sns.axes_style('ticks'):
+            plt.plot(x, data_obj, label='Object psf')
+            plt.legend()
+            plt.show()
 
 
 def gauss(x, *p):
-    amp, mu, sigma, b = p
-    return amp * np.exp(-(x - mu) ** 2 / (2. * sigma ** 2)) + b
+    amp, mu, sigma = p
+    return amp * np.exp(-(x - mu) ** 2 / (2. * sigma ** 2))
 
 
 def moffat(x, *p):
-    amp, mu, sigma, alpha, b = p
-    return amp * (1. + (x - mu) ** 2 / (2 * sigma ** 2)) ** (-alpha) + b
+    amp, mu, sigma, alpha = p
+    return amp * (1. + (x - mu) ** 2 / (2. * sigma ** 2)) ** (-alpha)
 
 
 def lorentz(x, *p):
