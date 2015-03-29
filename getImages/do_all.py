@@ -5,12 +5,18 @@ import getpass
 from get_images import get_image_info
 from get_stamps import cutout
 from sep_phot import iterate_thru_images
-from ossos_scripts import storage
+
+import sys
+sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/ossos')
+from ossos import storage
 
 import pandas as pd
 
-
-_LOCALPATH = 'asteroid_families/all/all_stamps'
+_DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
+_VOS_DIR = 'vos:kawebb/postage_stamps/'
+_IMAGE_LISTS = '{}/image_lists'.format(_DIR_PATH_BASE)
+_STAMPS_DIR = '{}/postage_stamps'.format(_DIR_PATH_BASE)
+_PHOT_DIR = '{}/phot_output'.format(_DIR_PATH_BASE)
 
 
 def main():
@@ -41,7 +47,7 @@ def main():
                         help="restrict type of image (unprocessed, reduced, calibrated)")
     parser.add_argument("--radius", '-r',
                         action='store',
-                        default=0.02,
+                        default=0.01,
                         help='Radius (degree) of circle of cutout postage stamp.')
     parser.add_argument("--aperture", '-ap',
                         action='store',
@@ -49,7 +55,7 @@ def main():
                         help='aperture (degree) of circle for photometry.')
     parser.add_argument("--thresh", '-th',
                         action='store',
-                        default=5.0,
+                        default=3.,
                         help='threshold value.')
 
     args = parser.parse_args()
@@ -68,35 +74,48 @@ def do_all_things(familyname, filtertype, imagetype, radius, aperture, thresh):
     password = getpass.getpass("CADC password: ")
 
     # establish input/output
-    vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
+
+    if familyname == 'none':
+        vos_dir = '{}/none'.format(_VOS_DIR)
+    else:
+        vos_dir = '{}/all'.format(_VOS_DIR)
+
     assert storage.exists(vos_dir)
-    image_list_path = 'asteroid_families/{}/{}_images_test.txt'.format(familyname, familyname)  # USING TEST FILE
+    image_list_path = '{}/{}_images_test.txt'.format(_IMAGE_LISTS, familyname)  # USING TEST FILE
     print "WARNING: USING A TEST FILE ***************************************************************"
 
     '''
     # initiate output file
-    out_filename = '{}_r{}_t{}_output.txt'.format(familyname, aperture, thresh)
-    with open('asteroid_families/{}/phot_output/{}'.format(familyname, familyname, out_filename), 'w') as outfile:
-        outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(
-        'object', 'expnum', 'ra', 'dec', 'flux', 'mag', 'x', 'y', 'stars', 'time', 'consistent_f', 'consistent_mag'))
+    out_filename = '{}_output.txt'.format(familyname)
+    with open('{}/{}/{}'.format(_PHOT_DIR, familyname, out_filename), 'w') as outfile:
+        outfile.write("{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n".format(
+            'object', 'expnum', 'ra', 'dec', 'flux', 'mag', 'x', 'y', 'time', 'consistent_f',
+            'consistent_mag', 'diff_ra', 'diff_dec', 'a', 'b', 'theta'))
     '''
 
     # Remove any fits files hanging around from failed run
-    for fits_file in os.listdir(_LOCALPATH):
+    for fits_file in os.listdir(_STAMPS_DIR):
         if fits_file.endswith('.fits'):
-            storage.remove('{}/{}'.format(_LOCALPATH, fits_file))
+            storage.remove('{}/{}'.format(_STAMPS_DIR, fits_file))
 
     tkbad_list = []
-    with open('asteroid_families/tkBAD.txt') as infile:
+    with open('catalogue/tkBAD.txt') as infile:
         for line in infile:
             tkbad_list.append(line.split(' ')[0])
 
     # for each image of each object, make cutout and go to sep_phot
     if os.path.exists(image_list_path):
-        table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['Object', 'Image', 'RA', 'DEC'],
-                              sep=' ', dtype={'Object': object, 'Image': object})
 
-        for row in range(27, len(table)):
+        try:
+            table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0,
+                                  names=['Object', 'Image', 'RA', 'DEC'],
+                                  sep=' ', dtype={'Object': object, 'Image': object})
+        except pd.parser.CParserError:
+            table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0,
+                                  names=['Object', 'Image', 'RA', 'DEC'],
+                                  sep='\t', dtype={'Object': object, 'Image': object})
+
+        for row in range(0, len(table)):
             print '\n{} --- Searching for {} in exposure {} -----'.format(row, table['Object'][row],
                                                                           table['Image'][row])
             expnum = (table['Image'][row]).strip('{}'.format(imagetype))
@@ -118,12 +137,11 @@ def do_all_things(familyname, filtertype, imagetype, radius, aperture, thresh):
 
                 while (success is False) and (attempts < 3):
                     success = iterate_thru_images(familyname, str(table['Object'][row]), table['Image'][row], username,
-                                                  password, aperture, thresh, filtertype, imagetype)
+                                                  password, aperture, thresh)
                     attempts += 1
 
                     if attempts == 3:
-                        print ' >>>> Last attempt'
-                    print '\n'
+                        print ' >>>> Last attempt \n'
 
     else:
         go_the_long_way(familyname, radius, filtertype, imagetype, username, password)
@@ -136,7 +154,7 @@ def go_the_long_way(familyname, radius, filtertype, imagetype, username, passwor
 
         print '\n----- Searching for {} {} -----'.format(objectname, expnum_list[index])
 
-        vos_dir = 'vos:kawebb/postage_stamps/{}'.format(familyname)
+        vos_dir = 'vos:kawebb/postage_stamps/all'
         postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, expnum_list[index], ra_list[index],
                                                                  dec_list[index])
         if storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)):
@@ -152,7 +170,7 @@ def go_the_long_way(familyname, radius, filtertype, imagetype, username, passwor
         attempts = 0
         while (success is False) and (attempts < 3):
             success = iterate_thru_images(familyname, str(table['Object'][row]), table['Image'][row], username,
-                                          password, aperture, thresh, filtertype, imagetype)
+                                          password, aperture, thresh)
             attempts += 1
             if attempts == 3:
                 print ' >>>> Last attempt'

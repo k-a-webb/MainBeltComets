@@ -12,20 +12,21 @@ import pandas as pd
 from shapely.geometry import Polygon
 from astropy.coordinates import SkyCoord
 
-from ossos_scripts import storage
-import ossos_scripts.wcs as wcs
-from ossos_scripts.storage import exists
-from ossos_scripts.horizons import batch
+import sys
+sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/ossos')
+sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/planning')
+from ossos import daophot
+from ossos import storage
+from ossos import wcs
+from planning.plotting.horizons import batch
 
 from get_images import get_image_info
 import get_stamps
 
 client = vos.Client()
 _VOS_PATH = 'vos:kawebb/postage_stamps'
-vos_dir = '{}/all'.format(_VOS_PATH)
 _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
-_DIR_PATH = '{}/asteroid_families'.format(_DIR_PATH_BASE)
-_STAMPS_DIR = '{}/postage_stamps'
+_STAMPS_DIR = '{}/postage_stamps'.format(_DIR_PATH_BASE)
 _IMAGE_LISTS = '{}/image_lists'.format(_DIR_PATH_BASE)
 _OUTPUT_DIR = '{}/phot_output'.format(_DIR_PATH_BASE)
 
@@ -113,28 +114,36 @@ def find_objects_by_phot(family_name, object_name, ap, th, filter_type='r', imag
     else:
         image_list, expnum_list, ra_list, dec_list = get_image_info(family_name, filter_type, image_type)
 
-    # If object name is not specified, iterate through all objects in the family
-    if object_name is None:
-        out_filename = '{}_phot.txt'.format(family_name)
-        with open('{}/{}'.format(_OUTPUT_DIR, out_filename), 'w') as outfile:
-            outfile.write("{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n".format(
-                'object', 'expnum', 'ra', 'dec', 'flux', 'mag', 'x', 'y', 'time', 'consistent_f',
-                'consistent_mag', 'diff_ra', 'diff_dec', 'a', 'b', 'theta'))
+    tkbad_list = []
+    with open('catalogue/tkBAD.txt') as infile:
+        for line in infile:
+            tkbad_list.append(line.split(' ')[0])
 
-        for index, image_object in enumerate(image_list):
-            print 'Finding asteroid {} in family {} '.format(object_name, family_name)
-            iterate_thru_images(family_name, image_object, expnum_list[index], username, password, ap, th)
+    if expnum in tkbad_list:
+        print '-- Bad exposure'
     else:
-        out_filename = '{}_{}_phot.txt'.format(family_name, object_name)
-        with open('{}/{}'.format(_OUTPUT_DIR, out_filename), 'w') as outfile:
-            outfile.write("{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n".format(
-                'object', 'expnum', 'ra', 'dec', 'flux', 'mag', 'x', 'y', 'time', 'consistent_f',
-                'consistent_mag', 'diff_ra', 'diff_dec', 'a', 'b', 'theta'))
+        # If object name is not specified, iterate through all objects in the family
+        if object_name is None:
+            out_filename = '{}_phot.txt'.format(family_name)
+            with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename), 'a') as outfile:
+                outfile.write("{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n".format(
+                    'object', 'expnum', 'ra', 'dec', 'flux', 'mag', 'x', 'y', 'time', 'consistent_f',
+                    'consistent_mag', 'diff_ra', 'diff_dec', 'a', 'b', 'theta'))
 
-        for index, image_object in enumerate(image_list):
-            if object_name == image_object:
+            for index, image_object in enumerate(image_list):
                 print 'Finding asteroid {} in family {} '.format(object_name, family_name)
-                iterate_thru_images(family_name, object_name, expnum_list[index], username, password, ap, th)
+                iterate_thru_images(family_name, image_object, expnum_list[index], username, password, ap, th)
+        else:
+            out_filename = '{}_{}_phot.txt'.format(family_name, object_name)
+            with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename, 'a')) as outfile:
+                outfile.write("{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n".format(
+                    'object', 'expnum', 'ra', 'dec', 'flux', 'mag', 'x', 'y', 'time', 'consistent_f',
+                    'consistent_mag', 'diff_ra', 'diff_dec', 'a', 'b', 'theta'))
+
+            for index, image_object in enumerate(image_list):
+                if object_name == image_object:
+                    print 'Finding asteroid {} in family {} '.format(object_name, family_name)
+                    iterate_thru_images(family_name, object_name, expnum_list[index], username, password, ap, th)
 
 
 def iterate_thru_images(family_name, object_name, expnum_p, username, password, ap, th):
@@ -144,7 +153,7 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
 
     try:
         print "-- Performing photometry on image {} ".format(expnum_p)
-        septable, header, data = get_fits_data(object_name, expnum_p, ap, th)
+        septable, header, data = get_fits_data(object_name, expnum_p, family_name, ap, th)
         exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_header_info(header)
 
         print "-- Querying JPL Horizon's ephemeris"
@@ -155,18 +164,18 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
         transients, catalogue, catalog_stars = compare_to_catalogue(table)
 
         good_neighbours, r_err = iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
-                                                      expnum_p, mag_list_jpl, ra_dot, dec_dot, exptime)
+                                                      expnum_p, mag_list_jpl, ra_dot, dec_dot, exptime, family_name)
         if good_neighbours is None:
             return True
 
         if len(good_neighbours) == 1:
             involved = check_involvement(good_neighbours, catalogue, r_err, pvwcs, size_x, size_y)
             if involved:
-                write_to_error_file2(object_name, expnum_p, out_filename='involved.txt')
+                write_to_error_file2(object_name, expnum_p, out_filename='involved.txt', family_name=family_name)
                 return True
             else:
                 write_to_file(object_name, expnum_p, good_neighbours, start,
-                              out_filename='{}_output.txt'.format(family_name))
+                              out_filename='{}_output.txt'.format(family_name), family_name=family_name)
                 print '-- Cutting out recentered postage stamp'
                 # cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, _RADIUS, username, password)
                 return good_neighbours
@@ -177,9 +186,6 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
 
     except Exception, e:
         print 'ERROR: {}'.format(e)
-        if 'PHOTZP' in e.message:
-            get_stamps.get_one_stamp(object_name, expnum_p, _RADIUS, username, password, family_name)
-            return False
         if 'NoneType' in e.message:
             return False
         else:
@@ -189,13 +195,18 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
         return True
 
 
-def get_fits_data(object_name, expnum_p, ap, th):
+def get_fits_data(object_name, expnum_p, family_name, ap, th):
     """
     Finds image in VOSpace, determines number of extensions, inputs parameters aperture and threshold into the photometry method,
     returns photometry measurements and header values
     """
 
     try:
+        if family_name == 'none':
+            vos_dir = '{}/none'.format(_VOS_PATH)
+        else:
+            vos_dir = '{}/all'.format(_VOS_PATH)
+
         assert storage.exists(vos_dir)
         for fits_file in client.listdir(vos_dir):  # images named with convention: object_expnum_RA_DEC.fits
 
@@ -211,7 +222,7 @@ def get_fits_data(object_name, expnum_p, ap, th):
                     header = fits.getheader(file_path)
                     table = sep_phot(data, ap, th)
 
-                    os.unlink('{}/{}'.format(_STAMPS_DIR, fits_file))
+                    os.unlink(file_path)
 
                     return table, header, data
 
@@ -219,13 +230,10 @@ def get_fits_data(object_name, expnum_p, ap, th):
         print "WARNING: Image does not exist for {} {}".format(object_name, expnum_p)
         raise
     except Exception, e:
-        if e.message == 'invalid aperture parameters':
-            print 'ERROR: {}'.format(e)
-            raise
-        else:
-            print 'ERROR: {}'.format(e)
-            write_to_error_file2(object_name, expnum_p, out_filename="phot_param_err.txt")
-            raise
+        print 'ERROR: {}'.format(e)
+        write_to_error_file2(object_name, expnum_p, out_filename="phot_param_err.txt", family_name=family_name)
+        raise
+
 
 
 def get_header_info(header):
@@ -472,13 +480,13 @@ def neighbour_search(transients, r_sig, p_x, p_y):
 
     # parse through table and get RA and DEC closest to predicted coordinates (in pixels)
     coords = np.array([p_x, p_y])
-    i_list = tree.query_ball_point(coords, r_sig, )
+    i_list = tree.query_ball_point(coords, r_sig)
 
     return i_list
 
 
 def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
-                         expnum, mag_list_jpl, ra_dot, dec_dot, exptime):
+                         expnum, mag_list_jpl, ra_dot, dec_dot, exptime, family_name):
     """
     Selects nearest neighbour object from predicted coordinates as object of interest
     In order:
@@ -512,7 +520,7 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
     print '-- Identifying object from nearest neighbours within {} pixels'.format(r_sig)
     i_list, found = find_neighbours(transients, r_sig, p_x, p_y)
     if not found:
-        with open('{}/no_object_found.txt'.format(_OUTPUT_DIR), 'a') as infile:
+        with open('{}/{}/no_object_found.txt'.format(_OUTPUT_DIR, family_name), 'a') as infile:
             infile.write('{}\t{}\t{}\t{}\t{}\n'.format(object_name, expnum, p_ra, p_dec, f_pix))
         raise Exception
 
@@ -529,7 +537,7 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
         print both_cond2
         if len(both_cond) > 1:
             print '>> More than one object identified, writing to file <<'
-            write_to_error_file(object_name, expnum, both_cond, out_filename='multiple_iden.txt')
+            write_to_error_file(object_name, expnum, both_cond, out_filename='multiple_iden.txt', family_name=family_name)
         return both_cond2, f_pix_err
     elif len(only_f_cond) > 0:
         print '>> Elongation is consistent, magnitude is not:'
@@ -537,7 +545,7 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
         print only_f_cond2
         if len(only_f_cond) > 1:
             print '>> More than one object identified, writing to file <<'
-            write_to_error_file(object_name, expnum, only_f_cond2, out_filename='multiple_iden.txt')
+            write_to_error_file(object_name, expnum, only_f_cond2, out_filename='multiple_iden.txt', family_name=family_name)
         return only_f_cond2, f_pix_err
     elif len(only_mag_cond) > 0:
         print '>> Magnitude is consistent, elongation is not:'
@@ -545,13 +553,13 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
         print only_mag_cond2
         if len(only_mag_cond) > 1:
             print '>> More than one object identified, writing to file <<'
-            write_to_error_file(object_name, expnum, only_mag_cond2, out_filename='multiple_iden.txt')
+            write_to_error_file(object_name, expnum, only_mag_cond2, out_filename='multiple_iden.txt', family_name=family_name)
         return only_mag_cond2, f_pix_err
     else:
         print "WARNING: No condition could be satisfied <<<<<<<<<<<<<<<<<<<<<<<<<<<<"
         print '  Nearest neighbours:'
         print i_table
-        write_to_error_file(object_name, expnum, i_table, out_filename='no_cond_satif.txt')
+        write_to_error_file(object_name, expnum, i_table, out_filename='no_cond_satif.txt', family_name=family_name)
         return
 
 
@@ -629,7 +637,7 @@ def check_involvement(object_data, catalogue, r_err, pvwcs, size_x, size_y):
         return False
 
 
-def write_to_file(object_name, expnum_p, object_data, start, out_filename):
+def write_to_file(object_name, expnum_p, object_data, start, out_filename, family_name):
     """
     Prints to outfile
     """
@@ -639,7 +647,7 @@ def write_to_file(object_name, expnum_p, object_data, start, out_filename):
         time_start = Time(start, format='iso')
         time_mjd = time_start.mjd
 
-        with open('{}/{}'.format(_OUTPUT_DIR, out_filename), 'a') as outfile:
+        with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename), 'a') as outfile:
             for i in range(0, len(object_data)):
                 outfile.write('{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n'.format(
                     object_name, expnum_p, object_data['ra'][i], object_data['dec'][i], object_data['flux'][i],
@@ -651,12 +659,12 @@ def write_to_file(object_name, expnum_p, object_data, start, out_filename):
         print "WARNING: Could not identify object {} in image".format(object_name, expnum_p)
 
 
-def write_to_error_file(object_name, expnum, object_data, out_filename):
+def write_to_error_file(object_name, expnum, object_data, out_filename, family_name):
     """
     prints a list of nearest neighbours to an outfile for human inspection
     """
     object_data.reset_index(drop=True, inplace=True)
-    with open('{}/{}'.format(_OUTPUT_DIR, out_filename), 'a') as outfile:
+    with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename), 'a') as outfile:
         try:
             for i in range(len(object_data)):
                 outfile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
@@ -668,12 +676,12 @@ def write_to_error_file(object_name, expnum, object_data, out_filename):
             print "ERROR: cannot write to outfile {} <<<<<<<<<<<<".format(e)
 
 
-def write_to_error_file2(object_name, expnum, out_filename):
+def write_to_error_file2(object_name, expnum, out_filename, family_name):
     """
     Write image information to out file
     """
 
-    with open('{}/{}'.format(_OUTPUT_DIR, out_filename), 'a') as outfile:
+    with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename), 'a') as outfile:
         try:
             outfile.write('{}\t{}\n'.format(object_name, expnum))
 

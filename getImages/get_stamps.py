@@ -11,10 +11,12 @@ import numpy as np
 from astropy.table import Table, Column
 import pandas as pd
 
-from ossos_scripts import storage
-from ossos_scripts import coding
-from ossos_scripts import mpc
-from ossos_scripts import util
+import sys
+sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/ossos')
+from ossos import storage
+from ossos import coding
+from ossos import mpc
+from ossos import util
 
 _TARGET = "TARGET"
 _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
@@ -230,7 +232,7 @@ def cutout(username, password, family_name, object_name, image, ra, dec, radius,
         return
     storage.copy('{}/{}'.format(_STAMPS_DIR, postage_stamp_filename),
                  '{}/{}'.format(vos_dir, postage_stamp_filename))
-    os.unlink('{}/{}'.format(output_dir, postage_stamp_filename))
+    os.unlink('{}/{}'.format(_STAMPS_DIR, postage_stamp_filename))
 
 
 if __name__ == '__main__':

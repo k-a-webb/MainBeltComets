@@ -5,8 +5,7 @@ import os
 import pandas as pd
 
 _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
-_DIR_PATH = '{}/asteroid_families'.format(_DIR_PATH_BASE)
-_OUTPUT_DIR = '{}/family_lists'.format(_DIR_PATH)
+_OUTPUT_DIR = '{}/family_lists'.format(_DIR_PATH_BASE)
 if not os.path.isdir(_OUTPUT_DIR):
     os.makedirs(_OUTPUT_DIR)
 
@@ -89,7 +88,7 @@ def get_all_families_list(output=None):
     """
 
     if output is None:
-        output = '{}/all_families.txt'.format(_OUTPUT_DIR)
+        output = '{}/all_family_new.txt'.format(_OUTPUT_DIR)
 
     r = requests.get(_BASEURL_NUMB_FAM)
     r.raise_for_status()
@@ -238,7 +237,7 @@ def parse_for_all(mba_list, status=3, fromfile=True):
 
     '''
     # optional, same output as find_by_status()
-    with open('{}/all_list_status_{}.txt'.format(_DIR_PATH, status), 'w') as outfile:
+    with open('{}/all_list_status_{}.txt'.format(_OUTPUT_DIR, status), 'w') as outfile:
         for item in name_list:
             outfile.write('{}\n'.format(item))
     '''
