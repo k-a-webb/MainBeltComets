@@ -4,7 +4,12 @@ from astropy.io import ascii
 from astropy.time import Time
 import requests
 import argparse
+
+import sys
+sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/ossos')
+# from ossos.ssos import Query WHY DOESNT THIS WORK?
 from ossos_scripts.ssos import Query
+
 import time
 import pandas as pd
 import find_family
@@ -35,13 +40,10 @@ def main():
                         default='p',
                         choices=['o', 'p', 's'],
                         help="restrict type of image (unprocessed, reduced, calibrated)")
-    parser.add_argument('--suffix',
-                        default=None,
-                        help="Suffix of object list file")
 
     args = parser.parse_args()
 
-    get_image_info(str(args.family), args.filter, args.type, args.suffix)
+    get_image_info(str(args.family), args.filter, args.type)
 
 
 def get_image_info(familyname, filtertype='r', imagetype='p'):
@@ -57,7 +59,7 @@ def get_image_info(familyname, filtertype='r', imagetype='p'):
 
     # establish input/output
     family_list = '{}/{}_family.txt'.format(_FAMILY_LISTS, familyname)
-    output = '{}/{}_images.txt'.format(_OUTPUT_DIR, familyname)
+    output = '{}/{}_images_new8.txt'.format(_OUTPUT_DIR, familyname)
 
     if os.path.exists(family_list):
         with open(family_list) as infile:
@@ -91,7 +93,7 @@ def get_image_info(familyname, filtertype='r', imagetype='p'):
     expnum_list = []
     ra_list = []
     dec_list = []
-    for object_name in object_list[459:len(object_list) - 1]: # skip header lines
+    for object_name in object_list[51101:len(object_list) - 1]: # skip header lines
         query = Query(object_name, search_start_date=search_start_date, search_end_date=search_end_date)
 
         try:
@@ -107,7 +109,7 @@ def get_image_info(familyname, filtertype='r', imagetype='p'):
                 objects = parse_ssois_return(query.get(), object_name, imagetype, camera_filter=filtertype)
 
         for line in objects:
-            with open('{}/{}'.format(family_dir, output), 'a') as outfile:
+            with open(output, 'a') as outfile:
                 image_list.append(object_name)
                 expnum_list.append(line['Exptime'])
                 ra_list.append(line['Object_RA'])
