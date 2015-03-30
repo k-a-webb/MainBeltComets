@@ -71,7 +71,7 @@ def main():
 
     table = pd.read_table('{}/434/434_output_test.txt'.format(_PHOT_DIR), sep=' ', dtype={'object': object})
 
-    for i in range(5, 6):  # len(input)):
+    for i in range(5, 15):  # len(input)):
 
         detect_mbc('434', table['object'][i], table['expnum'][i], i)
         print '\n'
@@ -90,18 +90,25 @@ def detect_mbc(family_name, object_name, expnum, i):
     header, data = fits_data(object_name, expnum, family_name)
     bkg = get_bkg(data)
 
+    '''
     target = header[_TARGET]
     if 'BH' not in target:
         print '-- NOT in H Block'
         return
+    '''
+
+    # reject any object too bright that will definetly be saturated
+    mag = asteroid_id['mag'].values
+    if mag < 18.5:
+        print '>> Object is too bright for accurate photometry'
+        return
 
     ossos_path = '{}/{}/{}'.format(_OSSOS_PATH_BASE, expnum.strip('p'), header[_CCD])
     file_fwhm = '{}{}.fwhm'.format(expnum, header[_CCD].split('d')[1])
-    # with storage.open_vos_or_local(file_fwhm) as infile:
-    # fwhm = float(infile.readline)
     storage.copy('{}/{}'.format(ossos_path, file_fwhm), '{}/{}'.format(_STAMPS_DIR, file_fwhm))
     with open('{}/{}'.format(_STAMPS_DIR, file_fwhm)) as infile:
         fwhm = float(infile.readline())
+    os.unlink('{}/{}'.format(_STAMPS_DIR, file_fwhm))
 
     print '-- Getting asteroid data'
     ast_data, x_ast = get_asteroid_data(asteroid_id, data, i, fwhm, bkg)
@@ -178,6 +185,8 @@ def get_star_data(expnum, header, object_data):
     with fits.open(local_file_path) as hdulist:
         data = hdulist[0].data
 
+    os.unlink(local_psf)
+
     # data_masked = remove_saturated_rows(data, 117)
     data_masked = data
 
@@ -219,12 +228,6 @@ def get_asteroid_data(object_data, data, i, fwhm, bkg):
     """
     Calculate psf of asteroid, taking into acount trailing effect
     """
-
-    # reject any object too bright that will definetly be saturated
-    mag = object_data['mag'].values
-    if mag < 18.5:
-        print '>> Object is too bright for accurate photometry'
-        raise Exception
 
     data_cutout = cutout_data(object_data, data, fwhm, bkg)
 

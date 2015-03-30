@@ -1,3 +1,6 @@
+get_images/*.psf.fits
+get_images/*.fits
+get_images/asteroid_families/*
 shapely/
 .Python
 .ipynb_checkpoints/
