@@ -235,7 +235,6 @@ def get_fits_data(object_name, expnum_p, family_name, ap, th):
         raise
 
 
-
 def get_header_info(header):
     """
     Get values from image header
@@ -513,6 +512,8 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
     f_pix = 0.5 * ((ra_dot / 2) ** 2 + (dec_dot / 2) ** 2) ** 0.5 * (exptime / (3600 * 0.184))
     f_pix_err = (_F_ERR / 100) * 0.5 * (abs(ra_dot) + abs(dec_dot)) * (exptime / (3600 * 0.184))
     assert f_pix_err != 0
+    if f > 10:
+        print '>> Asteroid is predicted to have high elongation'
 
     print '  Theoretical focal length: {:.2f} +/- {:.2f}'.format(f_pix, f_pix_err)
     print '  Theoretical magnitude: {:.2f} +/- {:.2f}'.format(mean, magrange)
