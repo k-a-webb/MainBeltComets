@@ -67,14 +67,14 @@ def get_stamps(familyname, username, password, radius):
     Cutout postage stamps of objects from VOSpace OSSOS mosaic, upload to VOSpace again
     """
 
-    if familyname == none:
+    if familyname == 'none':
         vos_dir = '{}/none'.format(_VOS_PATH)
     else:
         vos_dir = '{}/all'.format(_VOS_PATH)
 
     print "----- Cutting postage stamps of objects in family {} -----".format(familyname)
 
-    image_list_path = '{}/{}_images.txt'.format(_IMAGE_LISTS, familyname)
+    image_list_path = '{}/{}_images_new.txt'.format(_IMAGE_LISTS, familyname)
     try:
         table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['object', 'expnum', 'ra', 'dec'],
                               sep=' ', dtype={'Object': object, 'Image': object})
@@ -220,6 +220,7 @@ def cutout(username, password, family_name, object_name, image, ra, dec, radius,
             cutout_fobj = full_fobj[0]
     except requests.HTTPError, e:
         print 'Connection Failed, {}'.format(e)
+
         return
 
     # print "Got this much data: {}".format(cutout_fobj.data.shape)
