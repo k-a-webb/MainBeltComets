@@ -10,14 +10,11 @@ import os
 import sep
 from astropy.io import fits
 import copy
-
 from scipy.ndimage.interpolation import rotate
-
 import math
 import seaborn as sns
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
-from scipy.optimize import leastsq
 from shapely.geometry import Polygon
 
 import sys
@@ -25,6 +22,7 @@ import sys
 sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/ossos')
 from ossos import daophot
 from ossos import storage
+from ossos import wcs
 import sep_phot
 
 _VOS_DIR = 'vos:kawebb/postage_stamps'
@@ -32,6 +30,7 @@ _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
 _STAMPS_DIR = '{}/postage_stamps'.format(_DIR_PATH_BASE)
 _OSSOS_PATH_BASE = 'vos:OSSOS/dbimages'
 _PHOT_DIR = '{}/phot_output'.format(_DIR_PATH_BASE)
+_PSF_DIR = '{}/psf_output'.format(_DIR_PATH_BASE)
 
 _CCD = 'EXTNAME'
 _ZMAG = 'PHOTZP'
@@ -44,6 +43,8 @@ _BUFFER2 = 20.  # used in the intial cutout of the polygon
 _BUFFER3 = 5  # masking center of star psf
 _SATURATION_LEVEL = 3  # sigma? above background
 _SATURATION_THRESHOLD = 3  # maximum allowed pixels above saturation level
+
+_OUTPUT_NO_MKPSF = '{}/no_image_psf.txt'.format(_PSF_DIR)
 
 client = vos.Client()
 
@@ -71,7 +72,7 @@ def main():
 
     table = pd.read_table('{}/434/434_output_test.txt'.format(_PHOT_DIR), sep=' ', dtype={'object': object})
 
-    for i in range(5, 15):  # len(input)):
+    for i in range(14, 15):  # len(input)):
 
         detect_mbc('434', table['object'][i], table['expnum'][i], i)
         print '\n'
@@ -81,14 +82,30 @@ def detect_mbc(family_name, object_name, expnum, i):
     """
     Compare psf of asteroid with mean of stars to detect possible comae
     """
+
+    # read in asteroid identification values from the photometry output
     phot_output_file = '{}/{}/{}_output_test.txt'.format(_PHOT_DIR, family_name, family_name)
     phot_output_table = pd.read_table(phot_output_file, sep=' ', dtype={'object': object})
     asteroid_id = phot_output_table.query('object == "{}" & expnum == "{}"'.format(object_name, expnum))
+
     print 'buffers: ', _BUFFER1, _BUFFER2
     print asteroid_id
 
-    header, data = fits_data(object_name, expnum, family_name)
+    # read in postage stamp header and data, do photometry to measure background (needed for saturation check)
+    header, data, fits_file = fits_data(object_name, expnum, family_name)
     bkg = get_bkg(data)
+
+    # make sure that a mean star psf has been created form the OSSOS pipeline
+    if not storage.get_status(expnum.strip('p'), header[_CCD].split('d')[1], 'mkpsf'):
+        expnum_ccd = '{} {}'.format(expnum.strip('p'), header[_CCD].split('d')[1])
+        print 'PSF does not exist'
+        with open(_OUTPUT_NO_MKPSF, 'a') as outfile:
+            contents = []
+            for line in outfile:
+                contents.append(line.strip('\n'))
+            if expnum_ccd not in contents:
+                outfile.write('{}\n'.format(expnum_ccd))
+        return
 
     '''
     target = header[_TARGET]
@@ -103,23 +120,21 @@ def detect_mbc(family_name, object_name, expnum, i):
         print '>> Object is too bright for accurate photometry'
         return
 
-    ossos_path = '{}/{}/{}'.format(_OSSOS_PATH_BASE, expnum.strip('p'), header[_CCD])
-    file_fwhm = '{}{}.fwhm'.format(expnum, header[_CCD].split('d')[1])
-    storage.copy('{}/{}'.format(ossos_path, file_fwhm), '{}/{}'.format(_STAMPS_DIR, file_fwhm))
-    with open('{}/{}'.format(_STAMPS_DIR, file_fwhm)) as infile:
-        fwhm = float(infile.readline())
-    os.unlink('{}/{}'.format(_STAMPS_DIR, file_fwhm))
+    # get fwhm from OSSOS VOSpace file
+    fwhm = storage.get_fwhm(expnum.strip('p'), header[_CCD].split('d')[1])
 
     print '-- Getting asteroid data'
     ast_data, x_ast = get_asteroid_data(asteroid_id, data, i, fwhm, bkg)
 
     print '-- Getting star data'
-    star_data, x_star = get_star_data(expnum, header, asteroid_id)
+    star_data, x_star = get_star_data(expnum, header, asteroid_id, fits_file)
 
     print '-- Mean star fit'
-    meas_psf(star_data, x_star, amp=100, sigma=5., alpha=1.)
+    # meas_psf(star_data, x_star, amp=100, sigma=5., alpha=1.)
     print '-- Asteroid fit'
-    meas_psf(ast_data, x_ast, amp=100, sigma=12., alpha=10.)
+    #meas_psf(ast_data, x_ast, amp=100, sigma=12., alpha=10.)
+
+    compare_psf(star_data, x_star, [100., np.argmax(star_data), 5.], ast_data, x_ast, [100, np.argmax(ast_data), 12.])
 
 
 def fits_data(object_name, expnum, family_name):
@@ -158,41 +173,47 @@ def fits_data(object_name, expnum, family_name):
                     bkg.subfrom(data)
                     '''
 
-                    return header, data
+                    return header, data, fits_file
 
                     # os.unlink(file_path)
 
 
-def get_star_data(expnum, header, object_data):
+def get_star_data(expnum, header, object_data, fits_file):
     """
     From ossos psf fitted image, calculate line profile
     """
     # calculate mean psf
-    ossos_path = '{}/{}/{}'.format(_OSSOS_PATH_BASE, expnum.strip('p'), header[_CCD])
-    file_psf = '{}{}.psf.fits'.format(expnum, header[_CCD].split('d')[1])
-    storage.copy('{}/{}'.format(ossos_path, file_psf), '{}/{}'.format(_STAMPS_DIR, file_psf))
-    local_file_path = '{}/{}'.format(_STAMPS_DIR, file_psf)
-    local_psf = '{}{}.psf'.format(expnum, header[_CCD].split('d')[1])
+    uri = storage.get_uri(expnum.strip('p'), header[_CCD].split('d')[1])
+    ossos_psf = '{}.psf.fits'.format(uri.strip('.fits'))
+    local_psf = '{}{}.psf.fits'.format(expnum, header[_CCD].split('d')[1])
+    local_file_path = '{}/{}'.format(_STAMPS_DIR, local_psf)
+    storage.copy(ossos_psf, local_file_path)
 
+    # run seepsf on the mean psf image
     from pyraf import iraf
+
+    stamp_uri = '{}/all/{}'.format(_VOS_DIR, fits_file)
+    header = storage.get_header(stamp_uri)
+    pvwcs = wcs.WCS(header)
+    x, y = pvwcs.sky2xy(object_data['ra'].values, object_data['dec'].values)
 
     iraf.set(uparm="./")
     iraf.digiphot(_doprint=0)
     iraf.apphot(_doprint=0)
     iraf.daophot(_doprint=0)
-    iraf.seepsf(local_file_path, local_psf)
+    iraf.seepsf(local_file_path, local_psf, xpsf=x, ypsf=y)
 
     with fits.open(local_file_path) as hdulist:
         data = hdulist[0].data
 
-    os.unlink(local_psf)
+    #os.unlink(local_file_path)
 
     # data_masked = remove_saturated_rows(data, 117)
     data_masked = data
 
     th = math.degrees(object_data['theta'].values)
     data_rot = rotate(data_masked, th)
-    np.savetxt('star_rot.txt', data_rot, fmt='%.0e')
+    # np.savetxt('star_rot.txt', data_rot, fmt='%.0e')
 
     # sum all the values in each ROW
     totaled = []
@@ -233,7 +254,7 @@ def get_asteroid_data(object_data, data, i, fwhm, bkg):
 
     hdu = fits.PrimaryHDU()
     hdu.data = data_cutout
-    hdu.writeto('cutout_-th_{}_fwhm.fits'.format(i), clobber=True)
+    hdu.writeto('cutout_{}.fits'.format(i), clobber=True)
 
     # sum all the values in each ROW
     totaled = []
@@ -287,7 +308,7 @@ def cutout_data(object_data, data, fwhm, bkg):
     np.copyto(data_obj, data[y_min:y_max, x_min:x_max])
 
     print 'saturation level, bkg: ', bkg * _SATURATION_LEVEL, bkg
-    data_masked = remove_saturated_rows(data_obj, bkg * _SATURATION_LEVEL)
+    data_masked = data_obj  # remove_saturated_rows(data_obj, bkg * _SATURATION_LEVEL)
 
     # rotate the data about the angle of elongation, semi major axis is along x as reading out rows (not columsn)
     data_rot = pd.DataFrame(data=rotate(data_masked, th))
@@ -341,7 +362,7 @@ def remove_saturated_rows(data, sat_level):
         sat_np = sat.values
         sat_masked = np.ma.masked_array(sat_np, np.isnan(sat_np))
 
-        if np.ma.sum(sat_masked) > 3 * sat_level:
+        if np.ma.sum(sat_masked) > 5 * sat_level:
             satur_row.append(row)
             mask_row = np.zeros(len(data_row))
         else:
@@ -380,9 +401,6 @@ def meas_psf(data_obj, x, amp, sigma, alpha):
     # calculate best parameters for the gaussian fit
     # x = data_obj.index
     mid_pt = np.argmax(data_obj)
-
-    print x
-    print len(x), len(data_obj)
 
     try:
 
@@ -452,10 +470,35 @@ def penny(x, *p):
     return amp * ((1. - p2) / (1. + (x / p1) ** 2) + p2 * np.exp(-0.693 * ((x / p1) ** 2 + x * p3)))
 
 
-def compare_psf():
+def compare_psf(data_str, x_str, p_str, data_ast, x_ast, p_ast):
     """
     Compare psf of asteroid against mean of stars, check if anomaly in wings
     """
+
+    fitp_str, fitco_str = curve_fit(gauss, x_str, data_str, p_str)
+    perr_str = np.sqrt(np.diag(fitco_str))
+    x_str_norm = np.divide((np.array(x_str)).astype(float), np.amax(x_str))
+
+    fitp_ast, fitco_ast = curve_fit(gauss, x_ast, data_ast, p_ast)
+    perr_ast = np.sqrt(np.diag(fitco_ast))
+
+    print fitp_str, perr_str
+    print fitp_ast, perr_ast
+
+    x1 = range(x_str[0], x_str[-1] * 4)
+    x2_1 = range(x_ast[0], x_ast[-1] * 4)
+    x2 = np.array(x2_1).astype(float) / 4
+
+    gauss_str = fitp_ast[0] * np.exp(-(x2 - fitp_ast[1]) ** 2 / (2. * fitp_str[2] ** 2))
+    gauss_ast = fitp_ast[0] * np.exp(-(x2 - fitp_ast[1]) ** 2 / (2. * fitp_ast[2] ** 2))
+
+    with sns.axes_style('ticks'):
+        plt.plot(x_ast, data_ast, label='Object psf')
+        # plt.plot(x_str, data_str, label='Star psf', ls='--')
+        plt.plot(x2, gauss_str, label='Gauss star fit', ls=':')
+        plt.plot(x2, gauss_ast, label='Gauss ast fit', ls='-.')
+        plt.legend()
+        plt.show()
 
 
 if __name__ == '__main__':
