@@ -11,7 +11,6 @@ import argparse
 from scipy.spatial import cKDTree
 import math
 import pandas as pd
-from shapely.geometry import Polygon
 from astropy.coordinates import SkyCoord
 
 import sys
@@ -39,7 +38,8 @@ _ERR_ELL_RAD = 15  # default radius of the error ellipse
 _MAG_ERR = 2  # default min range of magnitude from predicted by JPL
 _CAT_r_TOL = 5 * 0.184 / 3600  # Tolerance for error in RA DEC position from Stephens catalogue [pixels to degrees]
 _CAT_mag_TOL = 1  # Tolerance for error in measured magnitude from Stephens catalogue
-_F_ERR = 20.0  # Tolerance for error in calculation focal length
+_F_ERR = 10.0  # Tolerance for error in calculation focal length
+_BUFFER_POLY = 10  # Buffer [pix] around polygon surrounding the object in the catagloue comparison
 
 '''
 Preforms photometry on .fits files given an input of family name and object name
@@ -154,18 +154,18 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
     """
     For a given family, object, and exposure number, get orbital information of the object in the image
     """
-
-    print "-- Performing photometry on image {} ".format(expnum_p)
-    septable, header, data = get_fits_data(object_name, expnum_p, family_name, ap, th)
-    exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_header_info(header)
-
-    print "-- Querying JPL Horizon's ephemeris"
-    mag_list_jpl, r_sig = get_mag_rad(family_name, object_name)
-    p_ra, p_dec, ra_dot, dec_dot = get_coords(str(object_name), start, end)
-
-    table = append_table(septable, pvwcs, zeropt, p_ra, p_dec)
-    transients, catalogue, catalog_stars = compare_to_catalogue(table)
     try:
+        print "-- Performing photometry on image {} ".format(expnum_p)
+        septable, header, data = get_fits_data(object_name, expnum_p, family_name, ap, th)
+        exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_header_info(header)
+
+        print "-- Querying JPL Horizon's ephemeris"
+        mag_list_jpl, r_sig = get_mag_rad(family_name, object_name)
+        p_ra, p_dec, ra_dot, dec_dot = get_coords(str(object_name), start, end)
+
+        table = append_table(septable, pvwcs, zeropt, p_ra, p_dec)
+        transients, catalogue, catalog_stars = compare_to_catalogue(table)
+
         good_neighbours, r_err = iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
                                                       expnum_p, mag_list_jpl, ra_dot, dec_dot, exptime, family_name)
         if good_neighbours is None:
@@ -177,8 +177,8 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
                 write_to_error_file2(object_name, expnum_p, out_filename='involved.txt', family_name=family_name)
                 return True
             else:
-                write_to_file(object_name, expnum_p, good_neighbours, start,
-                              out_filename='{}_output.txt'.format(family_name), family_name=family_name)
+                # write_to_file(object_name, expnum_p, good_neighbours, (end - start) / 2,
+                # out_filename='{}_output.txt'.format(family_name), family_name=family_name)
                 print '-- Cutting out recentered postage stamp'
                 # cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, _RADIUS, username, password)
                 return good_neighbours
@@ -571,6 +571,8 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
         print '>> Both conditions met by:'
         both_cond2 = add_to_object_table(both_cond, 'yes', 'yes')
         print both_cond2
+        write_all_to_file(object_name, expnum, both_cond2, p_x, p_y, f_pix,
+                          out_filename='{}_all_output.txt'.format(family_name), family_name=family_name)
         if len(both_cond) > 1:
             print '>> More than one object identified, writing to file <<'
             write_to_error_file(object_name, expnum, both_cond, out_filename='multiple_iden.txt',
@@ -628,37 +630,17 @@ def check_involvement(object_data, catalogue, r_err, pvwcs, size_x, size_y):
     Determine whether two objects are involved (ie overlapping psf's)
     """
     object_data.reset_index(drop=True, inplace=True)
-    # polygon of identified asteroid
-    # print '>> Selects first object in good_neighbours to make polygon from'
-    a = object_data['a'][0] + r_err
-    b = object_data['b'][0] + r_err
-    th = object_data['theta'][0]
-    x = object_data['x'][0]
-    y = object_data['y'][0]
     ra = object_data['ra'][0]
     dec = object_data['dec'][0]
-    a_x = a * math.cos(th)
-    a_y = a * math.sin(th)
-    b_x = b * math.sin(th)
-    b_y = b * math.cos(th)
+    min_x = object_data['xmin'][0] - r_err
+    min_y = object_data['ymin'][0] - r_err
+    max_x = object_data['xmax'][0] + r_err
+    max_y = object_data['ymax'][0] + r_err
 
-    p1 = (x + b_x - a_x, y - a_y + b_y)
-    p2 = (x + a_x + b_x, y + a_y + b_y)
-    p3 = (x + a_x - b_x, y + a_y - b_y)
-    p4 = (x - a_x - b_x, y - a_y - b_y)
-
-    x_pts = [p1[0], p2[0], p3[0], p4[0]]
-    y_pts = [p1[1], p2[1], p3[1], p4[1]]
-
-    if (any(x_pts) > size_x) or (any(x_pts) < 0) or (any(y_pts) > size_y) or (any(y_pts) < 0):
+    if (max_x > size_x) or (min_x < 0) or (max_y > size_y) or (min_y < 0):
         print ">> Object is on the edge"
         return
 
-    # print '>> Asteroid boundary points: ({:.1f}, {:.1f}) ({:.1f}, {:.1f}) ({:.1f}, {:.1f}) ({:.1f}, {:.1f})'.format(
-    # p1[0], p1[1], p2[0], p2[1], p3[0], p3[1], p4[0], p4[1])
-
-    polygon = Polygon([p1, p2, p3, p4]).buffer(5)
-    min_x, min_y, max_x, max_y = polygon.bounds
     min_ra, min_dec = pvwcs.xy2sky(min_x, min_y)
     max_ra, max_dec = pvwcs.xy2sky(max_x, max_y)
 
@@ -693,6 +675,27 @@ def write_to_file(object_name, expnum_p, object_data, start, out_filename, famil
                     object_data['mag'][i], object_data['x'][i], object_data['y'][i], time_mjd,
                     object_data['consistent_f'][i], object_data['consistent_mag'][i], object_data['diff_ra'][i],
                     object_data['diff_dec'][i], object_data['a'][i], object_data['b'][i], object_data['theta'][i]))
+
+    else:
+        print "WARNING: Could not identify object {} in image".format(object_name, expnum_p)
+
+
+def write_all_to_file(object_name, expnum_p, object_data, p_x, p_y, p_f, out_filename, family_name):
+    """
+    Prints to outfile
+    """
+
+    if object_data is not None:
+
+        with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename), 'a') as outfile:
+            for i in range(0, len(object_data)):
+                outfile.write('{} {}\n{} {} {} {} {} {} {} {}\n{} {} {} {}\n{} {} {} {} {}\n\n'.format(
+                    object_name, expnum_p, p_x, p_y, object_data['x'][i], object_data['y'][i],
+                    object_data['x_mid'][i], object_data['y_mid'][i],
+                    object_data['x'][i] - object_data['x_mid'][i], object_data['y'][i] - object_data['y_mid'][i],
+                    object_data['a'][i], object_data['b'][i], object_data['a2'][i], object_data['b2'][i],
+                    p_f, object_data['f'][i], object_data['f2'][i],
+                    object_data['consistent_f'][i], object_data['consistent_mag'][i]))
 
     else:
         print "WARNING: Could not identify object {} in image".format(object_name, expnum_p)
