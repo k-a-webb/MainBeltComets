@@ -1,3 +1,5 @@
+activate_this = '/Users/admin/Desktop/MainBeltComets/bin/activate_this.py'
+execfile(activate_this, dict(__file__=activate_this))
 import os
 import sep
 import vos
@@ -13,11 +15,13 @@ from shapely.geometry import Polygon
 from astropy.coordinates import SkyCoord
 
 import sys
+
 sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/ossos')
-sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/planning')
 from ossos import daophot
 from ossos import storage
 from ossos import wcs
+
+sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/planning')
 from planning.plotting.horizons import batch
 
 from get_images import get_image_info
@@ -151,18 +155,17 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
     For a given family, object, and exposure number, get orbital information of the object in the image
     """
 
+    print "-- Performing photometry on image {} ".format(expnum_p)
+    septable, header, data = get_fits_data(object_name, expnum_p, family_name, ap, th)
+    exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_header_info(header)
+
+    print "-- Querying JPL Horizon's ephemeris"
+    mag_list_jpl, r_sig = get_mag_rad(family_name, object_name)
+    p_ra, p_dec, ra_dot, dec_dot = get_coords(str(object_name), start, end)
+
+    table = append_table(septable, pvwcs, zeropt, p_ra, p_dec)
+    transients, catalogue, catalog_stars = compare_to_catalogue(table)
     try:
-        print "-- Performing photometry on image {} ".format(expnum_p)
-        septable, header, data = get_fits_data(object_name, expnum_p, family_name, ap, th)
-        exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_header_info(header)
-
-        print "-- Querying JPL Horizon's ephemeris"
-        mag_list_jpl, r_sig = get_mag_rad(family_name, object_name)
-        p_ra, p_dec, ra_dot, dec_dot = get_coords(str(object_name), start, end)
-
-        table = append_table(septable, pvwcs, zeropt, p_ra, p_dec)
-        transients, catalogue, catalog_stars = compare_to_catalogue(table)
-
         good_neighbours, r_err = iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
                                                       expnum_p, mag_list_jpl, ra_dot, dec_dot, exptime, family_name)
         if good_neighbours is None:
@@ -220,11 +223,11 @@ def get_fits_data(object_name, expnum_p, family_name, ap, th):
 
                     data = fits.getdata(file_path)
                     header = fits.getheader(file_path)
-                    table = sep_phot(data, ap, th)
+                    objs = sep_phot(data, ap, th)
 
                     os.unlink(file_path)
 
-                    return table, header, data
+                    return objs, header, data
 
     except TypeError:
         print "WARNING: Image does not exist for {} {}".format(object_name, expnum_p)
@@ -291,14 +294,7 @@ def sep_phot(data, ap, th):
     fluxerr[use_circle] = cfluxerr
     flag[use_circle] = cflag
 
-    # write to ascii table
-    table = pd.DataFrame({'x': objs['x'],
-                          'y': objs['y'],
-                          'flux': objs['flux'],
-                          'a': objs['a'],
-                          'b': objs['b'],
-                          'theta': objs['theta']})
-    return table
+    return objs
 
 
 def get_mag_rad(family_name, object_name):
@@ -383,34 +379,71 @@ def get_coords(object_name, time_start, time_end):
     return ra_deg, dec_deg, ra_dot_cos_dec, dec_dot
 
 
-def append_table(table, pvwcs, zeropt, p_ra, p_dec):
+def append_table(objs, pvwcs, zeropt, p_ra, p_dec):
     """
     Calculates the RA and DEC and MAG and adds columns to the tale from the photometry
     """
+
+    table = pd.DataFrame({'x': objs['x'],
+                          'y': objs['y'],
+                          'x2': objs['x2'],
+                          'y2': objs['y2'],
+                          'a': objs['a'],
+                          'b': objs['b'],
+                          # 'cxx': objs['cxx'],
+                          # 'cyy': objs['cyy'],
+                          'xmin': objs['xmin'],
+                          'xmax': objs['xmax'],
+                          'ymin': objs['ymin'],
+                          'ymax': objs['ymax'],
+                          'theta': objs['theta'],
+                          'flux': objs['flux']
+                          })
+
+    # a2 = 0.25 * math.sqrt((xmax - xmin) ** 2 + (ymax - ymin) ** 2)
+    # b2 = math.sqrt((x - math.sqrt(x2)) ** 2 + (y + math.sqrt(y2)) ** 2)
+    # f = math.sqrt(a**2 - b**2)
+
     ra_list = []
     dec_list = []
     mag_sep_list = []
     f_list = []
     diff_ra = []
     diff_dec = []
+    a2_list = []
+    b2_list = []
+    f_list2 = []
+    x_mid = []
+    y_mid = []
 
     for row in range(len(table)):
-        try:
-            ra, dec = pvwcs.xy2sky(table['x'][row], table['y'][row])
-            ra_list.append(ra)
-            dec_list.append(dec)
-            mag_sep_list.append(-2.5 * math.log10(table['flux'][row]) + zeropt)
-            f_list.append((table['a'][row] ** 2 - table['b'][row] ** 2) ** 0.5)
-            diff_ra.append((p_ra - ra) * 3600)
-            diff_dec.append((p_dec - dec) * 3600)
-        except Exception, e:
-            print 'Error: {} row {}'.format(e, row)
+        ra, dec = pvwcs.xy2sky(table['x'][row], table['y'][row])
+        ra_list.append(ra)
+        dec_list.append(dec)
+        mag_sep_list.append(-2.5 * math.log10(table['flux'][row]) + zeropt)
+        a2 = 0.25 * math.sqrt(abs((table['xmax'][row] - table['xmin'][row]) ** 2 +
+                                  (table['ymax'][row] - table['ymin'][row]) ** 2))
+        b2 = math.sqrt(table['x2'][row] + table['y2'][row])
+        a2_list.append(a2)
+        b2_list.append(b2)
+        f_list.append((table['a'][row] ** 2 - table['b'][row] ** 2) ** 0.5)
+        f_list2.append(math.sqrt(abs(a2 ** 2 - b2 ** 2)))
+        diff_ra.append((p_ra - ra) * 3600)
+        diff_dec.append((p_dec - dec) * 3600)
+        x_mid.append(0.5 * (table['xmax'][row] - table['xmin'][row]) + table['xmin'][row])
+        y_mid.append(0.5 * (table['ymax'][row] - table['ymin'][row]) + table['ymin'][row])
+
     table['ra'] = ra_list
     table['dec'] = dec_list
     table['mag'] = mag_sep_list
     table['f'] = f_list
     table['diff_ra'] = diff_ra
     table['diff_dec'] = diff_dec
+    table['a2'] = a2_list
+    table['b2'] = b2_list
+    table['f2'] = f_list2
+    # table['y_mid'] = y_mid
+    # table['x_mid'] = x_mid
     return table
 
 
@@ -512,7 +545,8 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
     f_pix = 0.5 * ((ra_dot / 2) ** 2 + (dec_dot / 2) ** 2) ** 0.5 * (exptime / (3600 * 0.184))
     f_pix_err = (_F_ERR / 100) * 0.5 * (abs(ra_dot) + abs(dec_dot)) * (exptime / (3600 * 0.184))
     assert f_pix_err != 0
-    if f > 10:
+
+    if f_pix > 10:
         print '>> Asteroid is predicted to have high elongation'
 
     print '  Theoretical focal length: {:.2f} +/- {:.2f}'.format(f_pix, f_pix_err)
@@ -527,8 +561,9 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
 
     i_table = transients.iloc[i_list, :]  # row, column
 
-    both_cond = i_table.query('({} < f < {}) & ({} < mag < {})'.format(f_pix - f_pix_err, f_pix + f_pix_err,
-                                                                       mean - magrange, mean + magrange))
+    both_cond = i_table.query('({} < f2 < {}) & ({} < mag < {})'.format(f_pix - f_pix_err, f_pix + f_pix_err,
+                                                                        mean - magrange, mean + magrange))
+
     only_f_cond = i_table.query('{} < f < {}'.format(f_pix - f_pix_err, f_pix + f_pix_err))
     only_mag_cond = i_table.query('{} < mag < {}'.format(mean - magrange, mean + magrange))
 
@@ -538,7 +573,8 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
         print both_cond2
         if len(both_cond) > 1:
             print '>> More than one object identified, writing to file <<'
-            write_to_error_file(object_name, expnum, both_cond, out_filename='multiple_iden.txt', family_name=family_name)
+            write_to_error_file(object_name, expnum, both_cond, out_filename='multiple_iden.txt',
+                                family_name=family_name)
         return both_cond2, f_pix_err
     elif len(only_f_cond) > 0:
         print '>> Elongation is consistent, magnitude is not:'
@@ -546,7 +582,8 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
         print only_f_cond2
         if len(only_f_cond) > 1:
             print '>> More than one object identified, writing to file <<'
-            write_to_error_file(object_name, expnum, only_f_cond2, out_filename='multiple_iden.txt', family_name=family_name)
+            write_to_error_file(object_name, expnum, only_f_cond2, out_filename='multiple_iden.txt',
+                                family_name=family_name)
         return only_f_cond2, f_pix_err
     elif len(only_mag_cond) > 0:
         print '>> Magnitude is consistent, elongation is not:'
@@ -554,7 +591,8 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
         print only_mag_cond2
         if len(only_mag_cond) > 1:
             print '>> More than one object identified, writing to file <<'
-            write_to_error_file(object_name, expnum, only_mag_cond2, out_filename='multiple_iden.txt', family_name=family_name)
+            write_to_error_file(object_name, expnum, only_mag_cond2, out_filename='multiple_iden.txt',
+                                family_name=family_name)
         return only_mag_cond2, f_pix_err
     else:
         print "WARNING: No condition could be satisfied <<<<<<<<<<<<<<<<<<<<<<<<<<<<"
