@@ -177,8 +177,8 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
                 write_to_error_file2(object_name, expnum_p, out_filename='involved.txt', family_name=family_name)
                 return True
             else:
-                # write_to_file(object_name, expnum_p, good_neighbours, (end - start) / 2,
-                # out_filename='{}_output.txt'.format(family_name), family_name=family_name)
+                write_to_file(object_name, expnum_p, good_neighbours, header,
+                              out_filename='{}_output.txt'.format(family_name), family_name=family_name)
                 print '-- Cutting out recentered postage stamp'
                 # cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, _RADIUS, username, password)
                 return good_neighbours
@@ -442,8 +442,8 @@ def append_table(objs, pvwcs, zeropt, p_ra, p_dec):
     table['a2'] = a2_list
     table['b2'] = b2_list
     table['f2'] = f_list2
-    # table['y_mid'] = y_mid
-    # table['x_mid'] = x_mid
+    table['y_mid'] = y_mid
+    table['x_mid'] = x_mid
     return table
 
 
@@ -658,21 +658,23 @@ def check_involvement(object_data, catalogue, r_err, pvwcs, size_x, size_y):
         return False
 
 
-def write_to_file(object_name, expnum_p, object_data, start, out_filename, family_name):
+def write_to_file(object_name, expnum_p, object_data, header, out_filename, family_name):
     """
     Prints to outfile
     """
 
+    date = header['DATE-OBS']
+    start_mjd = Time('{}T{}'.format(header['DATE-OBS'], header['UTIME']), format='isot').mjd
+    end_mjd = Time('{}T{}'.format(header['DATE-OBS'], header['UTCEND']), format='isot').mjd
+    time = (end_mjd - start_mjd) / 2
+    date_time = '{}-{}'.format(date, time)
+
     if object_data is not None:
-
-        time_start = Time(start, format='iso')
-        time_mjd = time_start.mjd
-
         with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename), 'a') as outfile:
             for i in range(0, len(object_data)):
                 outfile.write('{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n'.format(
                     object_name, expnum_p, object_data['ra'][i], object_data['dec'][i], object_data['flux'][i],
-                    object_data['mag'][i], object_data['x'][i], object_data['y'][i], time_mjd,
+                    object_data['mag'][i], object_data['x'][i], object_data['y'][i], date_time,
                     object_data['consistent_f'][i], object_data['consistent_mag'][i], object_data['diff_ra'][i],
                     object_data['diff_dec'][i], object_data['a'][i], object_data['b'][i], object_data['theta'][i]))
 
@@ -686,7 +688,7 @@ def write_all_to_file(object_name, expnum_p, object_data, p_x, p_y, p_f, out_fil
     """
 
     if object_data is not None:
-
+        print object_data
         with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename), 'a') as outfile:
             for i in range(0, len(object_data)):
                 outfile.write('{} {}\n{} {} {} {} {} {} {} {}\n{} {} {} {}\n{} {} {} {} {}\n\n'.format(
@@ -698,7 +700,7 @@ def write_all_to_file(object_name, expnum_p, object_data, p_x, p_y, p_f, out_fil
                     object_data['consistent_f'][i], object_data['consistent_mag'][i]))
 
     else:
-        print "WARNING: Could not identify object {} in image".format(object_name, expnum_p)
+        print "WARNING: Could not print all output"
 
 
 def write_to_error_file(object_name, expnum, object_data, out_filename, family_name):
