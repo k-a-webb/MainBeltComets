@@ -139,7 +139,6 @@ def detect_mbc(family_name, object_name, expnum, i):
 
 
 def compare_psf_jj(data_str, data_ast):
-
     data_str_sig = np.array(data_str) ** 0.5
     data_ast_sig = np.array(data_ast) ** 0.5
 
@@ -218,8 +217,10 @@ def get_star_data(expnum, header, object_data, fits_file):
     iraf.daophot(_doprint=0)
     iraf.seepsf(local_file_path, local_psf, xpsf=x, ypsf=y)
 
-    with fits.open(local_file_path) as hdulist:
+    with fits.open(local_psf) as hdulist:
         data = hdulist[0].data
+        header = hdulist[0].header
+        print header['NAXIS2']
 
     os.unlink(local_file_path)
 
@@ -231,33 +232,22 @@ def get_star_data(expnum, header, object_data, fits_file):
     # np.savetxt('star_rot.txt', data_rot, fmt='%.0e')
 
     # sum all the values in each ROW
-    totaled = []
-    for row in range(len(data_rot)):
-        sum_col = np.ma.sum(data_rot[row])
-        if sum_col != 0.0:
-            totaled.append(sum_col)
-
-    # shift the baseline to zero
-    zeroed = []
-    for item in totaled:
-        zeroed.append(item - np.amin(totaled))
-
-    # normalize the data, perhaps not necessary?
-    normed = []
-    for item in zeroed:
-        normed.append(item / np.amax(zeroed) * 100)
-
-    midpt = int(len(normed) / 2)
+    totaled = np.ma.sum(data_rot, axis=1)
 
     # remove core from psf
     x = []
     y = []
+    midpt = int(len(totaled) / 2)
     for i in range(len(totaled)):
         if (i < midpt - _BUFFER3) or (i > midpt + _BUFFER3):
             x.append(i)
             y.append(totaled[i])
 
-    return y, x
+    x = []
+    for i in range(len(totaled)):
+        x.append(i * header['NAXIS2'] / len(totaled))
+
+    return totaled, x
 
 
 def get_asteroid_data(object_data, data, i, fwhm, bkg):
@@ -265,32 +255,20 @@ def get_asteroid_data(object_data, data, i, fwhm, bkg):
     Calculate psf of asteroid, taking into acount trailing effect
     """
 
-    data_cutout = cutout_data(object_data, data, fwhm, bkg)
+    data_cutout, x = cutout_data(object_data, data, fwhm, bkg)
 
     hdu = fits.PrimaryHDU()
     hdu.data = data_cutout
     hdu.writeto('cutout_{}.fits'.format(i), clobber=True)
 
     # sum all the values in each ROW
-    totaled = []
-    for row in range(len(data_cutout)):
-        sum_col = np.ma.sum(data_cutout[row])
-        if sum_col != 0.0:
-            totaled.append(sum_col)
+    totaled = np.ma.sum(data_cutout, axis=1)
 
-    # shift the baseline to zero
-    zeroed = []
-    for item in totaled:
-        zeroed.append(item - np.amin(totaled))
+    x2 = []
+    for i in range(len(totaled)):
+        x2.append(i * x / len(totaled))
 
-    # normalize the data, perhaps not necessary?
-    normed = []
-    for item in zeroed:
-        normed.append(item / np.amax(zeroed) * 100)
-
-    x = np.array(range(len(normed)))
-
-    return totaled, x
+    return totaled, x2
 
 
 def cutout_data(object_data, data, fwhm, bkg):
@@ -358,7 +336,7 @@ def cutout_data(object_data, data, fwhm, bkg):
     # np.savetxt('mask.txt', mask, fmt='%.0e')
     np.savetxt('data_cutout.txt', data_cutout)  # , fmt='%.0e')
 
-    return data_cutout
+    return data_cutout, y_max2 - y_min2
 
 
 def remove_saturated_rows(data, sat_level):
@@ -501,12 +479,6 @@ def compare_psf(data_str, x_str, p_str, data_ast, x_ast, p_ast):
     >> changed data to not normalized nor baseline subtracted
     """
 
-    # create arrays in x with more data points for the gaussian fit
-    assert len(x_str) > len(x_ast)
-    x_str2 = np.array(range(x_str[0], x_str[-1] * 4)).astype(dtype=float) / 4
-    x_ast2 = np.array(range(x_ast[0], x_ast[-1] * 4)).astype(dtype=float) / 4
-    x_str3 = np.divide(x_str2, np.divide(np.amax(x_str2), np.amax(x_ast2)))
-
     # fit a gaussian to the asteroid psf, use parameter 'b' to zero the baseline, refit \
     # use parameter 'amp' to normalize, refit
     fitp_ast, fitco_ast = curve_fit(gauss, x_ast, data_ast, p_ast)
@@ -515,7 +487,7 @@ def compare_psf(data_str, x_str, p_str, data_ast, x_ast, p_ast):
     data_ast_norm = np.divide(data_ast_sub, fitp_ast2[0])
     fitp_ast3, fitco_ast3 = curve_fit(gauss, x_ast, data_ast_norm, p_ast)
     perr_ast3 = np.sqrt(np.diag(fitco_ast3))
-    gauss_ast = fitp_ast3[0] * np.exp(-(x_ast2 - fitp_ast3[1]) ** 2 / (2. * fitp_ast3[2] ** 2)) + fitp_ast3[3]
+    gauss_ast = fitp_ast3[0] * np.exp(-(x_ast - fitp_ast3[1]) ** 2 / (2. * fitp_ast3[2] ** 2)) + fitp_ast3[3]
 
     # fit a gaussian to the star psf, use parameter 'b' to zero the baseline, refit \
     # use parameter 'amp' to normalize, refit
@@ -525,17 +497,29 @@ def compare_psf(data_str, x_str, p_str, data_ast, x_ast, p_ast):
     data_str_norm = np.divide(data_str_sub, fitp_str2[0])
     fitp_str3, fitco_str3 = curve_fit(gauss, x_str, data_str_norm, p_str)
     perr_str3 = np.sqrt(np.diag(fitco_str3))
-    gauss_str = fitp_str3[0] * np.exp(-(x_str2 - fitp_str3[1]) ** 2 / (2. * fitp_str3[2] ** 2)) + fitp_str3[3]
+    gauss_str = fitp_str3[0] * np.exp(-(x_str - fitp_str3[1]) ** 2 / (2. * fitp_str3[2] ** 2)) + fitp_str3[3]
 
     # fit the star psf to a gaussian with the same mu (centerpoint) as the asteroid
-    gauss_str2 = fitp_str3[0] * np.exp(-(x_str2 - fitp_ast3[1]) ** 2 / (2. * fitp_str3[2] ** 2)) + fitp_str3[3]
+    gauss_str2 = fitp_str3[0] * np.exp(-(x_str - fitp_ast3[1]) ** 2 / (2. * fitp_str3[2] ** 2)) + fitp_str3[3]
     # fit the asteroid pst to a gaussian with the same mu (centerpoint) as the star
-    gauss_ast2 = fitp_ast3[0] * np.exp(-(x_ast2 - fitp_ast3[1]) ** 2 / (2. * fitp_ast3[2] ** 2)) + fitp_ast3[3]
+    gauss_ast2 = fitp_ast3[0] * np.exp(-(x_ast - fitp_str3[1]) ** 2 / (2. * fitp_ast3[2] ** 2)) + fitp_ast3[3]
+
+    with sns.axes_style('ticks'):
+        plt.plot(x_str, gauss_str, label='Gauss star', ls=':')
+        plt.plot(x_str, data_str_norm, label='PSF star', ls='-')
+        plt.legend()
+        plt.show()
+
+    with sns.axes_style('ticks'):
+        plt.plot(x_ast, gauss_ast, label='Gauss ast', ls=':')
+        plt.plot(x_ast, data_ast_norm, label='PSF ast', ls='-')
+        plt.legend()
+        plt.show()
 
     with sns.axes_style('ticks'):
         print 'Plotting gausian fits of asteroid and star psfs'
-        plt.plot(x_ast2, gauss_ast2, label='Gauss ast', ls=':')
-        plt.plot(x_str2, gauss_str, label='Gauss star', ls='-.')
+        plt.plot(x_ast, gauss_ast2, label='Gauss ast', ls=':')
+        plt.plot(x_str, gauss_str, label='Gauss star', ls='-')
         plt.legend()
         plt.show()
 
@@ -544,8 +528,8 @@ def compare_psf(data_str, x_str, p_str, data_ast, x_ast, p_ast):
 
     # fit the asteroid psf as a sum of two gaussians with both sigmas as free parameters
     fitp_ast4, fitco_ast4 = curve_fit(gauss2, x_ast, data_ast_norm, [p_ast[1], 0., fitp_str2[2]])
-    gauss2_ast = (np.exp(-(x_ast2 - fitp_ast4[0]) ** 2 / (2. * fitp_ast4[2] ** 2)) +
-                  np.exp(-(x_ast2 - fitp_ast4[0]) ** 2 / (2. * fitp_ast4[1] ** 2)))
+    gauss2_ast = (np.exp(-(x_ast - fitp_ast4[0]) ** 2 / (2. * fitp_ast4[2] ** 2)) +
+                  np.exp(-(x_ast - fitp_ast4[0]) ** 2 / (2. * fitp_ast4[1] ** 2)))
 
     global star_sig
     star_sig = fitp_str3[2]
@@ -554,8 +538,8 @@ def compare_psf(data_str, x_str, p_str, data_ast, x_ast, p_ast):
 
     # fit the asteroid psf as a sum of two gaussians with one sigma from the star psf, and the other a free parameter
     fitp_ast5, fitco_ast5 = curve_fit(gauss3, x_ast, data_ast_norm, [0., 0.])
-    gauss3_ast = (np.exp(-(x_ast2 - str_mu) ** 2 / (2. * fitp_ast5[0] ** 2)) +
-                  np.exp(-(x_ast2 - str_mu) ** 2 / (2 * star_sig ** 2)))
+    gauss3_ast = (np.exp(-(x_ast - str_mu) ** 2 / (2. * fitp_ast5[0] ** 2)) +
+                  np.exp(-(x_ast - str_mu) ** 2 / (2 * star_sig ** 2)))
 
     print fitp_ast5
 
@@ -578,7 +562,7 @@ def compare_psf(data_str, x_str, p_str, data_ast, x_ast, p_ast):
     with sns.axes_style('ticks'):
         plt.plot(x_str, data_str_norm, label='Star psf', ls='-.')
         plt.plot(x_scale, data_ast_norm, label='Object psf scaled')
-        plt.plot(x_str2, gauss_str, label='Gaussian fit of star')
+        plt.plot(x_str, gauss_str, label='Gaussian fit of star')
         plt.legend()
         plt.show()
 
