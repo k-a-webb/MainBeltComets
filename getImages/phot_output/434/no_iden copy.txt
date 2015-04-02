@@ -1,2 +1,0 @@
-object	expnum		ra		dec		flux		mag		x		y		diff_ra		diff_dec
-
