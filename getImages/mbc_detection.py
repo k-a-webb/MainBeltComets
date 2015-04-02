@@ -9,7 +9,6 @@ import argparse
 import os
 import sep
 from astropy.io import fits
-import copy
 from scipy.ndimage.interpolation import rotate
 import math
 import seaborn as sns
@@ -20,10 +19,8 @@ from shapely.geometry import Polygon
 import sys
 
 sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/ossos')
-from ossos import daophot
 from ossos import storage
 from ossos import wcs
-import sep_phot
 
 _VOS_DIR = 'vos:kawebb/postage_stamps'
 _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
@@ -72,7 +69,7 @@ def main():
 
     table = pd.read_table('{}/434/434_output_test.txt'.format(_PHOT_DIR), sep=' ', dtype={'object': object})
 
-    for i in range(14, 15):  # len(input)):
+    for i in range(5, 6):  # len(input)):
 
         detect_mbc('434', table['object'][i], table['expnum'][i], i)
         print '\n'
@@ -99,11 +96,12 @@ def detect_mbc(family_name, object_name, expnum, i):
     if not storage.get_status(expnum.strip('p'), header[_CCD].split('d')[1], 'mkpsf'):
         expnum_ccd = '{} {}'.format(expnum.strip('p'), header[_CCD].split('d')[1])
         print 'PSF does not exist'
-        with open(_OUTPUT_NO_MKPSF, 'a') as outfile:
+        with open(_OUTPUT_NO_MKPSF, 'r') as outfile:
             contents = []
             for line in outfile:
                 contents.append(line.strip('\n'))
-            if expnum_ccd not in contents:
+        if expnum_ccd not in contents:
+            with open(_OUTPUT_NO_MKPSF, 'a') as outfile:
                 outfile.write('{}\n'.format(expnum_ccd))
         return
 
@@ -132,9 +130,26 @@ def detect_mbc(family_name, object_name, expnum, i):
     print '-- Mean star fit'
     # meas_psf(star_data, x_star, amp=100, sigma=5., alpha=1.)
     print '-- Asteroid fit'
-    #meas_psf(ast_data, x_ast, amp=100, sigma=12., alpha=10.)
+    # meas_psf(ast_data, x_ast, amp=100, sigma=12., alpha=10.)
 
-    compare_psf(star_data, x_star, [100., np.argmax(star_data), 5.], ast_data, x_ast, [100, np.argmax(ast_data), 12.])
+    compare_psf(star_data, x_star, [np.argmax(star_data), float(len(x_star)) / 2, 8., 0.], ast_data, x_ast,
+                [np.argmax(ast_data), float(len(x_ast)) / 2., 5., 0.])
+
+    compare_psf_jj(star_data, ast_data)
+
+
+def compare_psf_jj(data_str, data_ast):
+
+    data_str_sig = np.array(data_str) ** 0.5
+    data_ast_sig = np.array(data_ast) ** 0.5
+
+    i = np.argmax(data_str) - np.argmax(data_ast)
+    r = np.divide(data_ast[:i], data_str[:-i])
+
+    r_sig = r * (np.divide(data_ast_sig[i:], data_ast[i:]) + np.divide(data_str_sig[:-i], data_str[:-i]))
+
+    r_mean = np.mean(r)
+    print (r - r_mean) / r_sig
 
 
 def fits_data(object_name, expnum, family_name):
@@ -206,7 +221,7 @@ def get_star_data(expnum, header, object_data, fits_file):
     with fits.open(local_file_path) as hdulist:
         data = hdulist[0].data
 
-    #os.unlink(local_file_path)
+    os.unlink(local_file_path)
 
     # data_masked = remove_saturated_rows(data, 117)
     data_masked = data
@@ -237,10 +252,10 @@ def get_star_data(expnum, header, object_data, fits_file):
     # remove core from psf
     x = []
     y = []
-    for i in range(len(normed)):
+    for i in range(len(totaled)):
         if (i < midpt - _BUFFER3) or (i > midpt + _BUFFER3):
             x.append(i)
-            y.append(normed[i])
+            y.append(totaled[i])
 
     return y, x
 
@@ -275,7 +290,7 @@ def get_asteroid_data(object_data, data, i, fwhm, bkg):
 
     x = np.array(range(len(normed)))
 
-    return normed, x
+    return totaled, x
 
 
 def cutout_data(object_data, data, fwhm, bkg):
@@ -451,8 +466,18 @@ def meas_psf(data_obj, x, amp, sigma, alpha):
 
 
 def gauss(x, *p):
-    amp, mu, sigma = p
-    return amp * np.exp(-(x - mu) ** 2 / (2. * sigma ** 2))
+    amp, mu, sigma, b = p
+    return amp * np.exp(-(x - mu) ** 2 / (2. * sigma ** 2)) + b
+
+
+def gauss2(x, *p):
+    mu, sigma1, sigma2 = p
+    return np.exp(-(x - mu) ** 2 / (2. * sigma1 ** 2)) + np.exp(-(x - mu) ** 2 / (2. * sigma2 ** 2))
+
+
+def gauss3(x, *p):
+    mu, sigma2 = p
+    return np.exp(-(x - mu) ** 2 / (2. * star_sig ** 2)) + np.exp(-(x - mu) ** 2 / (2. * sigma2 ** 2))
 
 
 def moffat(x, *p):
@@ -473,30 +498,87 @@ def penny(x, *p):
 def compare_psf(data_str, x_str, p_str, data_ast, x_ast, p_ast):
     """
     Compare psf of asteroid against mean of stars, check if anomaly in wings
+    >> changed data to not normalized nor baseline subtracted
     """
 
-    fitp_str, fitco_str = curve_fit(gauss, x_str, data_str, p_str)
-    perr_str = np.sqrt(np.diag(fitco_str))
-    x_str_norm = np.divide((np.array(x_str)).astype(float), np.amax(x_str))
+    # create arrays in x with more data points for the gaussian fit
+    assert len(x_str) > len(x_ast)
+    x_str2 = np.array(range(x_str[0], x_str[-1] * 4)).astype(dtype=float) / 4
+    x_ast2 = np.array(range(x_ast[0], x_ast[-1] * 4)).astype(dtype=float) / 4
+    x_str3 = np.divide(x_str2, np.divide(np.amax(x_str2), np.amax(x_ast2)))
 
+    # fit a gaussian to the asteroid psf, use parameter 'b' to zero the baseline, refit \
+    # use parameter 'amp' to normalize, refit
     fitp_ast, fitco_ast = curve_fit(gauss, x_ast, data_ast, p_ast)
-    perr_ast = np.sqrt(np.diag(fitco_ast))
+    data_ast_sub = np.subtract(data_ast, fitp_ast[3])
+    fitp_ast2, fitco_ast2 = curve_fit(gauss, x_ast, data_ast_sub, p_ast)
+    data_ast_norm = np.divide(data_ast_sub, fitp_ast2[0])
+    fitp_ast3, fitco_ast3 = curve_fit(gauss, x_ast, data_ast_norm, p_ast)
+    perr_ast3 = np.sqrt(np.diag(fitco_ast3))
+    gauss_ast = fitp_ast3[0] * np.exp(-(x_ast2 - fitp_ast3[1]) ** 2 / (2. * fitp_ast3[2] ** 2)) + fitp_ast3[3]
 
-    print fitp_str, perr_str
-    print fitp_ast, perr_ast
+    # fit a gaussian to the star psf, use parameter 'b' to zero the baseline, refit \
+    # use parameter 'amp' to normalize, refit
+    fitp_str, fitco_str = curve_fit(gauss, x_str, data_str, p_str)
+    data_str_sub = np.subtract(data_str, fitp_str[3])
+    fitp_str2, fitco_str2 = curve_fit(gauss, x_str, data_str_sub, p_ast)
+    data_str_norm = np.divide(data_str_sub, fitp_str2[0])
+    fitp_str3, fitco_str3 = curve_fit(gauss, x_str, data_str_norm, p_str)
+    perr_str3 = np.sqrt(np.diag(fitco_str3))
+    gauss_str = fitp_str3[0] * np.exp(-(x_str2 - fitp_str3[1]) ** 2 / (2. * fitp_str3[2] ** 2)) + fitp_str3[3]
 
-    x1 = range(x_str[0], x_str[-1] * 4)
-    x2_1 = range(x_ast[0], x_ast[-1] * 4)
-    x2 = np.array(x2_1).astype(float) / 4
-
-    gauss_str = fitp_ast[0] * np.exp(-(x2 - fitp_ast[1]) ** 2 / (2. * fitp_str[2] ** 2))
-    gauss_ast = fitp_ast[0] * np.exp(-(x2 - fitp_ast[1]) ** 2 / (2. * fitp_ast[2] ** 2))
+    # fit the star psf to a gaussian with the same mu (centerpoint) as the asteroid
+    gauss_str2 = fitp_str3[0] * np.exp(-(x_str2 - fitp_ast3[1]) ** 2 / (2. * fitp_str3[2] ** 2)) + fitp_str3[3]
+    # fit the asteroid pst to a gaussian with the same mu (centerpoint) as the star
+    gauss_ast2 = fitp_ast3[0] * np.exp(-(x_ast2 - fitp_ast3[1]) ** 2 / (2. * fitp_ast3[2] ** 2)) + fitp_ast3[3]
 
     with sns.axes_style('ticks'):
-        plt.plot(x_ast, data_ast, label='Object psf')
-        # plt.plot(x_str, data_str, label='Star psf', ls='--')
-        plt.plot(x2, gauss_str, label='Gauss star fit', ls=':')
-        plt.plot(x2, gauss_ast, label='Gauss ast fit', ls='-.')
+        print 'Plotting gausian fits of asteroid and star psfs'
+        plt.plot(x_ast2, gauss_ast2, label='Gauss ast', ls=':')
+        plt.plot(x_str2, gauss_str, label='Gauss star', ls='-.')
+        plt.legend()
+        plt.show()
+
+    print fitp_str3  # , perr_str3
+    print fitp_ast3  # , perr_ast3
+
+    # fit the asteroid psf as a sum of two gaussians with both sigmas as free parameters
+    fitp_ast4, fitco_ast4 = curve_fit(gauss2, x_ast, data_ast_norm, [p_ast[1], 0., fitp_str2[2]])
+    gauss2_ast = (np.exp(-(x_ast2 - fitp_ast4[0]) ** 2 / (2. * fitp_ast4[2] ** 2)) +
+                  np.exp(-(x_ast2 - fitp_ast4[0]) ** 2 / (2. * fitp_ast4[1] ** 2)))
+
+    global star_sig
+    star_sig = fitp_str3[2]
+    global str_mu
+    str_mu = fitp_str3[1]
+
+    # fit the asteroid psf as a sum of two gaussians with one sigma from the star psf, and the other a free parameter
+    fitp_ast5, fitco_ast5 = curve_fit(gauss3, x_ast, data_ast_norm, [0., 0.])
+    gauss3_ast = (np.exp(-(x_ast2 - str_mu) ** 2 / (2. * fitp_ast5[0] ** 2)) +
+                  np.exp(-(x_ast2 - str_mu) ** 2 / (2 * star_sig ** 2)))
+
+    print fitp_ast5
+
+    '''
+    with sns.axes_style('ticks'):
+        plt.plot(x_ast2, gauss3_ast, label='Gauss ast fit with str param', ls='-')
+        plt.plot(x_ast2, gauss2_ast, label='Gauss ast fit with any param', ls='-')
+        plt.plot(x_ast2, gauss_ast, label='Gauss ast fit', ls='-.')
+        plt.plot(x_ast, data_ast_norm, label='Object psf')
+        plt.legend()
+        plt.show()
+    '''
+
+    x_scale = []
+    for y in data_ast_norm[:len(data_ast_norm) / 2]:
+        x_scale.append(str_mu - np.sqrt(-np.log(y) * 2 * star_sig ** 2))
+    for y in data_ast_norm[len(data_ast_norm) / 2:]:
+        x_scale.append(str_mu + np.sqrt(-np.log(y) * 2 * star_sig ** 2))
+
+    with sns.axes_style('ticks'):
+        plt.plot(x_str, data_str_norm, label='Star psf', ls='-.')
+        plt.plot(x_scale, data_ast_norm, label='Object psf scaled')
+        plt.plot(x_str2, gauss_str, label='Gaussian fit of star')
         plt.legend()
         plt.show()
 
