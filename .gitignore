@@ -1,3 +1,5 @@
+
+
 .Python
 .ipynb_checkpoints/
 .pycharmrc
@@ -12,6 +14,11 @@ findObjects/mbc.txt
 findObjects/mpc-fetch.py
 findObjects/plot_MMR.ipynb
 getImages/asteroid_families/temp_phot_files/
+getImages/asteroid_families/
+getImages/__init__.py
+getImages/data_cutout.txt
+getImages/temp/
+getImages/test*
 getImages/*.fits
 getImages/delete_duplicates.py
 getImages/family_lists/astdys_table.txt
