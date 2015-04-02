@@ -1,16 +1,18 @@
+
+activate_this = '/Users/admin/Desktop/MainBeltComets/bin/activate_this.py'
+execfile(activate_this, dict(__file__=activate_this))
 import argparse
 import os
 import getpass
-
-from get_images import get_image_info
-from get_stamps import cutout
-from sep_phot import iterate_thru_images
+import pandas as pd
 
 import sys
 sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/ossos')
 from ossos import storage
 
-import pandas as pd
+from get_images import get_image_info
+from get_stamps import cutout
+from sep_phot import iterate_thru_images
 
 _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
 _VOS_DIR = 'vos:kawebb/postage_stamps/'
@@ -115,7 +117,7 @@ def do_all_things(familyname, filtertype, imagetype, radius, aperture, thresh):
                                   names=['Object', 'Image', 'RA', 'DEC'],
                                   sep='\t', dtype={'Object': object, 'Image': object})
 
-        for row in range(0, len(table)):
+        for row in range(0, 50):  # len(table)):
             print '\n{} --- Searching for {} in exposure {} -----'.format(row, table['Object'][row],
                                                                           table['Image'][row])
             expnum = (table['Image'][row]).strip('{}'.format(imagetype))
@@ -144,38 +146,7 @@ def do_all_things(familyname, filtertype, imagetype, radius, aperture, thresh):
                         print ' >>>> Last attempt \n'
 
     else:
-        go_the_long_way(familyname, radius, filtertype, imagetype, username, password)
-
-
-def go_the_long_way(familyname, radius, filtertype, imagetype, username, password):
-    image_list, expnum_list, ra_list, dec_list = get_image_info(familyname, filtertype, imagetype)
-
-    for index, objectname in enumerate(image_list):
-
-        print '\n----- Searching for {} {} -----'.format(objectname, expnum_list[index])
-
-        vos_dir = 'vos:kawebb/postage_stamps/all'
-        postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(objectname, expnum_list[index], ra_list[index],
-                                                                 dec_list[index])
-        if storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)):
-            print "-- Stamp already exists"
-        else:
-            cutout(objectname, expnum_list[index], ra_list[index], dec_list[index], radius, username, password,
-                   familyname)
-
-        '''
-        VVV currently does not work, obviously VVV
-        '''
-        success = False
-        attempts = 0
-        while (success is False) and (attempts < 3):
-            success = iterate_thru_images(familyname, str(table['Object'][row]), table['Image'][row], username,
-                                          password, aperture, thresh)
-            attempts += 1
-            if attempts == 3:
-                print ' >>>> Last attempt'
-            print '\n'
-
+        print 'image list path does not exist'
 
 if __name__ == '__main__':
     main()                        
