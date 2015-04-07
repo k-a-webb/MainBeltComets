@@ -128,10 +128,9 @@ def detect_mbc(family_name, object_name, expnum, i):
     star_data, x_star = get_star_data(expnum, header, asteroid_id, fits_file)
 
     print '-- Comparing PSFs'
-    # compare_psf(star_data, x_star, [np.argmax(star_data), float(len(x_star)) / 2, 4., 0.], ast_data, x_ast,
-    # [np.argmax(ast_data), float(len(x_ast)) / 2., 3., 0.])
+    compare_psf(star_data, ast_data, fwhm)
 
-    compare_psf_jj(star_data, ast_data, fwhm)
+    # compare_psf_jj(star_data, ast_data, fwhm)
 
 
 def fits_data(object_name, expnum, family_name):
@@ -347,111 +346,93 @@ def gauss2(x, *p):
     return np.exp(-(x - mu) ** 2 / (2. * sigma1 ** 2)) + np.exp(-(x - mu) ** 2 / (2. * sigma2 ** 2))
 
 
-def compare_psf(data_str, x_str, p_str, data_ast, x_ast, p_ast):
+def moffat(x, *p):
+    amp, mu, sigma, alpha = p
+    return amp * (1. + (x - mu) ** 2 / (sigma ** 2)) ** (-alpha)
+
+
+def moffat2(x, *p):
+    sigma, alpha = p
+    return star_amp * (1. + (x - star_mu) ** 2 / (sigma ** 2)) ** (-alpha)
+
+
+def lorentz(x, *p):
+    amp, p1, p2, p3 = p
+    return amp / (1. + ((x - p1) ** 2 / p2 ** 2) + (x * p3))
+
+
+def penny(x, *p):
+    amp, p1, p2, p3 = p
+    return amp * ((1. - p2) / (1. + (x / p1) ** 2) + p2 * np.exp(-0.693 * ((x / p1) ** 2 + x * p3)))
+
+
+def compare_psf(data_str, data_ast, fwhm):
     """
     Compare psf of asteroid against mean of stars, check if anomaly in wings
     >> changed data to not normalized nor baseline subtracted
     """
 
-    # fit a gaussian to the asteroid psf, use parameter 'b' to zero the baseline, refit \
-    # use parameter 'amp' to normalize, refit
-    fitp_ast, fitco_ast = curve_fit(gauss, x_ast, data_ast, p_ast)
-    data_ast_norm = np.divide(data_ast, fitp_ast[0])
-    fitp_ast3, fitco_ast3 = curve_fit(gauss, x_ast, data_ast_norm, p_ast)
-    perr_ast3 = np.sqrt(np.diag(fitco_ast3))
-    gauss_ast = fitp_ast3[0] * np.exp(-(x_ast - fitp_ast3[1]) ** 2 / (2. * fitp_ast3[2] ** 2)) + fitp_ast3[3]
+    x_ast = range(len(data_ast))
+    x_str = range(len(data_str))
+    p_str = [np.argmax(data_str), float(len(x_str)) / 2, fwhm]
+    p_ast = [np.argmax(data_ast), float(len(x_ast)) / 2., fwhm - 1]
 
-    # fit a gaussian to the star psf, use parameter 'b' to zero the baseline, refit \
-    # use parameter 'amp' to normalize, refit
+    global star_amp
+    star_amp = np.amax(data_str)
+    global star_mu
+    star_mu = float(len(x_str)) / 2.
+
+    # fit a gaussian to the asteroid psf
+    fitp_ast, fitco_ast = curve_fit(gauss, x_ast, data_ast, p_ast)
+    perr_ast = np.sqrt(np.diag(fitco_ast))
+    gauss_ast = fitp_ast[0] * np.exp(-(x_ast - fitp_ast[1]) ** 2 / (2. * fitp_ast[2] ** 2))
+    print '>> Ast fit parameters and error'
+    print fitp_ast
+    print perr_ast
+    print perr_ast[2] / fitp_ast[2] * 100
+
+    # fit a gaussian to the star psf
     fitp_str, fitco_str = curve_fit(gauss, x_str, data_str, p_str)
-    data_str_norm = np.divide(data_str, fitp_str[0])
-    fitp_str3, fitco_str3 = curve_fit(gauss, x_str, data_str_norm, p_str)
-    perr_str3 = np.sqrt(np.diag(fitco_str3))
-    gauss_str = fitp_str3[0] * np.exp(-(x_str - fitp_str3[1]) ** 2 / (2. * fitp_str3[2] ** 2)) + fitp_str3[3]
+    perr_str = np.sqrt(np.diag(fitco_str))
+    gauss_str = fitp_str[0] * np.exp(-(x_str - fitp_str[1]) ** 2 / (2. * fitp_str[2] ** 2))
+    print '>> Star fit parameters and error - Gauss'
+    print fitp_str
+    print perr_str
+    print perr_str[2] / fitp_str[2] * 100
+
+    # fitp_str_moff, fitco_str_moff = curve_fit(moffat2, x_str, data_str, [fwhm, 1.5])
+    fitp_str_moff, fitco_str_moff = curve_fit(moffat, x_str, data_str, [np.amax(data_str), float(len(x_str)) / 2., 20, 40])
+    perr_str_moff = np.sqrt(np.diag(fitco_str_moff))
+    moffat_str = fitp_str_moff[0] * (1 + ((np.subtract(x_str, fitp_str_moff[1])) ** 2 / fitp_str_moff[1] ** 2)) ** (-fitp_str_moff[2])
+    moffat_str3 = fitp_str_moff[0] * (1 + ((np.subtract(x_str, fitp_str_moff[1])) ** 2 / 22. ** 2)) ** (-40)
+    print '>> Star fit parameters and error - Moffat'
+    print fitp_str_moff
+    print perr_str_moff
+
+    fitp_str_lor, fitco_str_lor = curve_fit(lorentz, x_str, data_str, [np.argmax(data_str), float(len(x_str)) / 2, fwhm, 1.])
+    perr_str_lor = np.sqrt(np.diag(fitco_str_lor))
+    lorentz_str = fitp_str_lor[0] / (
+    1. + (np.multiply(x_str, x_str) / fitp_str_lor[1] ** 2) + np.multiply(x_str, fitp_str_lor[2]))
+    print '>> Star fit parameters and error - Lorentz'
+    print fitp_str_lor
+    print perr_str_lor
 
     # fit the asteroid pst to a gaussian with the same mu (centerpoint) as the star
-    gauss_ast2 = fitp_ast3[0] * np.exp(-(x_ast - fitp_str3[1]) ** 2 / (2. * fitp_ast3[2] ** 2)) + fitp_ast3[3]
-    '''
-    print fitp_ast
-    print fitp_str
-    temp_gauss_ast = fitp_ast[0] * np.exp(-(x_ast - fitp_ast[1]) ** 2 / (2. * fitp_ast[2] ** 2)) + fitp_ast[3]
-    temp_gauss_str = fitp_str[0] * np.exp(-(x_str - fitp_str[1]) ** 2 / (2. * fitp_str[2] ** 2)) + fitp_str[3]
+    gauss_ast_centered = fitp_ast[0] * np.exp(-(x_ast - fitp_str[1]) ** 2 / (2. * fitp_ast[2] ** 2))
+
     with sns.axes_style('ticks'):
-        plt.plot(x_str, temp_gauss_str, label='Gauss star', ls=':')
+        plt.plot(x_str, gauss_str, label='Gauss star', ls=':')
         plt.plot(x_str, data_str, label='PSF star', ls='-')
+        plt.plot(x_str, moffat_str, label='Moffat star', ls='-.')
+        plt.plot(x_str, moffat_str3, label='Moffat3 star', ls='-')
+        plt.plot(x_str, lorentz_str, label='Lorentz star', ls='--')
         plt.legend()
         plt.show()
     with sns.axes_style('ticks'):
-        plt.plot(x_ast, temp_gauss_ast, label='Gauss ast', ls=':')
+        plt.plot(x_ast, gauss_ast, label='Gauss ast', ls=':')
         plt.plot(x_ast, data_ast, label='PSF ast', ls='-')
         plt.legend()
         plt.show()
-    '''
-    print fitp_str, fitp_str3  # , perr_str3
-    print fitp_ast, fitp_ast3  # , perr_ast3
-    '''
-    with sns.axes_style('ticks'):
-        plt.plot(x_str, gauss_str, label='Gauss star', ls=':')
-        plt.plot(x_str, data_str_norm, label='PSF star', ls='-')
-        plt.legend()
-        plt.show()
-
-    with sns.axes_style('ticks'):
-        plt.plot(x_ast, gauss_ast, label='Gauss ast', ls=':')
-        plt.plot(x_ast, data_ast_norm, label='PSF ast', ls='-')
-        plt.legend()
-        plt.show()
-
-    with sns.axes_style('ticks'):
-        print 'Plotting gausian fits of asteroid and star psfs'
-        plt.plot(x_ast, gauss_ast2, label='Gauss ast', ls=':')
-        plt.plot(x_str, gauss_str, label='Gauss star', ls='-.')
-        plt.legend()
-        plt.show()
-    '''
-    # calculate difference in peak values
-    print np.argmax(data_str_norm), np.argmax(data_ast_norm)
-    i = (x_str[np.argmax(data_str_norm)] - x_ast[np.argmax(data_ast_norm)])
-    x_ast_shifted = np.add(x_ast, i)
-    '''
-    with sns.axes_style('ticks'):
-        plt.plot(x_ast_shifted, data_ast_norm, label='PSF ast shifted', ls='--')
-        plt.plot(x_str, data_str_norm, label='PSF star', ls='-.')
-        plt.legend()
-        plt.show()
-    '''
-    i2 = fitp_str3[1] - fitp_ast3[1]
-    x_ast_shifted2 = np.add(x_ast, i2)
-
-    '''
-    with sns.axes_style('ticks'):
-        plt.plot(x_ast_shifted2, data_ast_norm, label='PSF ast shifted', ls='--')
-        plt.plot(x_str, data_str_norm, label='PSF star', ls='-.')
-        plt.legend()
-        plt.show()
-    '''
-    data_ast_longer = []
-    for i in data_str_norm:
-        try:
-            data_ast_longer.append(data_ast[i])
-        except:
-            data_ast_longer.append(0)
-
-    guess = float(fitp_str3[1]) - float(fitp_ast3[1])
-    fitp_shift, fitco_shirt = curve_fit(shift, data_ast_longer, x_str, p0=guess)
-    print fitp_shift
-    x_ast_shifted2 = np.add(x_ast, fitp_shift[0])
-
-    with sns.axes_style('ticks'):
-        plt.plot(x_ast_shifted2, data_ast_norm, label='PSF ast shifted', ls='--')
-        plt.plot(x_str, data_str_norm, label='PSF star', ls='-.')
-        plt.legend()
-        plt.show()
-
-
-def shift(x, *p):
-    shifty = p
-    return x + shifty
 
 
 def compare_psf_jj(data_str, data_ast, fwhm):
@@ -570,6 +551,7 @@ def compare_psf_jj(data_str, data_ast, fwhm):
 
     print x_ast_shifted[i:]
     print x_str_cut[:-i]
+
 
 if __name__ == '__main__':
     main()
