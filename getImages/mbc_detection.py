@@ -128,28 +128,10 @@ def detect_mbc(family_name, object_name, expnum, i):
     star_data, x_star = get_star_data(expnum, header, asteroid_id, fits_file)
 
     print '-- Comparing PSFs'
-    compare_psf(star_data, x_star, [np.argmax(star_data), float(len(x_star)) / 2, 8., 0.], ast_data, x_ast,
-                [np.argmax(ast_data), float(len(x_ast)) / 2., 5., 0.])
+    # compare_psf(star_data, x_star, [np.argmax(star_data), float(len(x_star)) / 2, 4., 0.], ast_data, x_ast,
+    # [np.argmax(ast_data), float(len(x_ast)) / 2., 3., 0.])
 
-    compare_psf_jj(star_data, ast_data)
-
-
-def compare_psf_jj(data_str, data_ast):
-    """
-    Calculate the difference between the two psfs
-    """
-
-    data_str_sig = np.array(data_str) ** 0.5
-    data_ast_sig = np.array(data_ast) ** 0.5
-
-    i = np.argmax(data_str) - np.argmax(
-        data_ast)  # THIS IS WRONG, COMPARING TWO DIFFERENT INDEX SYSTEMS, not the ame size bins
-    r = np.divide(data_ast[:i], data_str[:-i])
-
-    r_sig = r * (np.divide(data_ast_sig[i:], data_ast[i:]) + np.divide(data_str_sig[:-i], data_str[:-i]))
-
-    r_mean = np.mean(r)
-    print (r - r_mean) / r_sig
+    compare_psf_jj(star_data, ast_data, fwhm)
 
 
 def fits_data(object_name, expnum, family_name):
@@ -221,7 +203,6 @@ def get_star_data(expnum, header, object_data, fits_file):
     with fits.open(local_psf) as hdulist:
         data = hdulist[0].data
         header = hdulist[0].header
-        print header['NAXIS2']
 
     os.unlink(local_file_path)
 
@@ -244,11 +225,11 @@ def get_asteroid_data(object_data, data, i, fwhm):
     """
 
     data_cutout, x = cutout_data(object_data, data, fwhm)
-
+    '''
     hdu = fits.PrimaryHDU()
     hdu.data = data_cutout
     hdu.writeto('cutout_{}.fits'.format(i), clobber=True)
-
+    '''
     # sum all the values in each ROW
     totaled = np.ma.sum(data_cutout, axis=1)
 
@@ -349,7 +330,7 @@ def get_bkg(data):
 
     except ValueError:
         data3 = data2.byteswap(True).newbyteorder()
-        bkg = sep.Background(data3)       # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
+        bkg = sep.Background(data3)  # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
 
     bkg.subfrom(data2)
 
@@ -357,8 +338,8 @@ def get_bkg(data):
 
 
 def gauss(x, *p):
-    amp, mu, sigma, b = p
-    return amp * np.exp(-(x - mu) ** 2 / (2. * sigma ** 2)) + b
+    amp, mu, sigma = p
+    return amp * np.exp(-(x - mu) ** 2 / (2. * sigma ** 2))
 
 
 def gauss2(x, *p):
@@ -390,7 +371,22 @@ def compare_psf(data_str, x_str, p_str, data_ast, x_ast, p_ast):
 
     # fit the asteroid pst to a gaussian with the same mu (centerpoint) as the star
     gauss_ast2 = fitp_ast3[0] * np.exp(-(x_ast - fitp_str3[1]) ** 2 / (2. * fitp_ast3[2] ** 2)) + fitp_ast3[3]
-
+    '''
+    print fitp_ast
+    print fitp_str
+    temp_gauss_ast = fitp_ast[0] * np.exp(-(x_ast - fitp_ast[1]) ** 2 / (2. * fitp_ast[2] ** 2)) + fitp_ast[3]
+    temp_gauss_str = fitp_str[0] * np.exp(-(x_str - fitp_str[1]) ** 2 / (2. * fitp_str[2] ** 2)) + fitp_str[3]
+    with sns.axes_style('ticks'):
+        plt.plot(x_str, temp_gauss_str, label='Gauss star', ls=':')
+        plt.plot(x_str, data_str, label='PSF star', ls='-')
+        plt.legend()
+        plt.show()
+    with sns.axes_style('ticks'):
+        plt.plot(x_ast, temp_gauss_ast, label='Gauss ast', ls=':')
+        plt.plot(x_ast, data_ast, label='PSF ast', ls='-')
+        plt.legend()
+        plt.show()
+    '''
     print fitp_str, fitp_str3  # , perr_str3
     print fitp_ast, fitp_ast3  # , perr_ast3
     '''
@@ -426,6 +422,7 @@ def compare_psf(data_str, x_str, p_str, data_ast, x_ast, p_ast):
     '''
     i2 = fitp_str3[1] - fitp_ast3[1]
     x_ast_shifted2 = np.add(x_ast, i2)
+
     '''
     with sns.axes_style('ticks'):
         plt.plot(x_ast_shifted2, data_ast_norm, label='PSF ast shifted', ls='--')
@@ -441,7 +438,6 @@ def compare_psf(data_str, x_str, p_str, data_ast, x_ast, p_ast):
             data_ast_longer.append(0)
 
     guess = float(fitp_str3[1]) - float(fitp_ast3[1])
-    print guess, type(guess)
     fitp_shift, fitco_shirt = curve_fit(shift, data_ast_longer, x_str, p0=guess)
     print fitp_shift
     x_ast_shifted2 = np.add(x_ast, fitp_shift[0])
@@ -452,9 +448,128 @@ def compare_psf(data_str, x_str, p_str, data_ast, x_ast, p_ast):
         plt.legend()
         plt.show()
 
+
 def shift(x, *p):
     shifty = p
     return x + shifty
+
+
+def compare_psf_jj(data_str, data_ast, fwhm):
+    """
+    Calculate the difference between the two psfs
+    """
+
+    x_ast = range(len(data_ast))
+    x_str = range(len(data_str))
+    p_str = [np.argmax(data_str), float(len(x_str)) / 2, fwhm]
+    p_ast = [np.argmax(data_ast), float(len(x_ast)) / 2., fwhm - 1]
+
+    x_str_small_steps = np.divide(range(len(x_str) * 4), 4)
+
+    # fit a gaussian to the asteroid psf, use parameter 'b' to zero the baseline, refit \
+    # use parameter 'amp' to normalize, refit
+    fitp_ast, fitco_ast = curve_fit(gauss, x_ast, data_ast, p_ast)
+    if np.amax < fitp_ast[0]:
+        data_ast_norm = np.divide(data_ast, fitp_ast[0])
+    else:
+        print '>> Normalizing from maximum value, not Gauss fit'
+        data_ast_norm = np.divide(data_ast, np.amax(data_ast))
+    fitp_ast3, fitco_ast3 = curve_fit(gauss, x_ast, data_ast_norm, p_ast)
+    perr_ast3 = np.sqrt(np.diag(fitco_ast3))
+    gauss_ast = fitp_ast3[0] * np.exp(-(x_ast - fitp_ast3[1]) ** 2 / (2. * fitp_ast3[2] ** 2))
+
+    # fit a gaussian to the star psf, use parameter 'b' to zero the baseline, refit \
+    # use parameter 'amp' to normalize, refit
+    fitp_str, fitco_str = curve_fit(gauss, x_str, data_str, p_str)
+    if np.amax < fitp_str[0]:
+        data_str_norm = np.divide(data_str, fitp_str[0])
+    else:
+        print '>> Normalizing from maximum value, not Gauss fit'
+        data_str_norm = np.divide(data_str, np.amax(data_str))
+    fitp_str3, fitco_str3 = curve_fit(gauss, x_str, data_str_norm, p_str)
+    perr_str3 = np.sqrt(np.diag(fitco_str3))
+    gauss_str = fitp_str3[0] * np.exp(-(x_str_small_steps - fitp_str3[1]) ** 2 / (2. * fitp_str3[2] ** 2))
+
+    shift_value = fitp_str3[1] - fitp_ast3[1]
+    x_ast_shifted = np.add(x_ast, shift_value)
+
+    '''
+    with sns.axes_style('ticks'):
+        plt.scatter(x_ast_shifted, data_ast_norm, marker='.') #, label='PSF ast shifted', ls='--')
+        plt.scatter(x_str, data_str_norm, marker='*') #, label='PSF star', ls='-.')
+        # plt.legend()
+       plt.show()
+    '''
+    print 'Plot of normalized asteroid psf with gaussian fit'
+    with sns.axes_style('ticks'):
+        plt.plot(x_ast, data_ast_norm, label='PSF ast', ls='--')
+        plt.plot(x_ast, gauss_ast, label='Gauss fit ast', ls='-.')
+        plt.legend()
+        plt.show()
+    print 'Plot of normalized star psf model and gaussian fit'
+    with sns.axes_style('ticks'):
+        plt.plot(x_str, data_str_norm, label='PSF star', ls=':')
+        plt.plot(x_str_small_steps, gauss_str, label='Gauss fit star', ls='-')
+        plt.legend()
+        plt.show()
+
+    decimals = x_ast_shifted[0] % 1
+    if not (decimals > 0.96):  # make sure its close enough to an integer in order to add one below
+        print decimals
+
+    x_str_cut = []
+    data_str_cut = []
+    data_str_cut2 = []
+    for x in range(int(x_ast_shifted[0]) + 1, int(x_ast_shifted[-1]) + 2):
+        x_str_cut.append(x)
+        data_str_cut.append(data_str_norm[x])
+        data_str_cut2.append(data_str[x])
+    '''
+    with sns.axes_style('ticks'):
+        plt.scatter(x_ast_shifted, data_ast_norm, marker='.')  # , label='PSF ast shifted', ls='--')
+        plt.scatter(x_str_cut, data_str_cut, marker='*')  # , label='PSF star', ls='-.')
+        # plt.legend()
+        plt.show()
+    '''
+
+    print 'Asteroid data points x, star data points x'
+    print x_ast_shifted
+    print x_str_cut
+
+    data_str_sig = np.array(data_str_cut) ** 0.5
+    data_ast_sig = np.array(data_ast_norm) ** 0.5
+    i = int(len(x_ast_shifted) / 2)
+    r = np.divide(data_ast_norm[i:], data_str_cut[:-i])
+    r_sig = r * (np.divide(data_ast_sig[i:], data_ast_norm[i:]) + np.divide(data_str_sig[:-i], data_str_cut[:-i]))
+    r_mean = np.mean(r)
+    print 'Normalized (r - r_mean) / r_sig'
+    print (r - r_mean) / r_sig
+    print "Normalized R"
+    print r
+    print '\n'
+    print np.ma.mean((r - r_mean) / r_sig)
+
+
+    # try again with non normalized data
+    data_str_sig = np.array(data_str_cut2) ** 0.5
+    data_ast_sig = np.array(data_ast) ** 0.5
+    r = np.divide(data_ast[i:], data_str_cut2[:-i])
+    r_sig = r * (np.divide(data_ast_sig[i:], data_ast[i:]) + np.divide(data_str_sig[:-i], data_str_cut2[:-i]))
+    r_mean = np.mean(r)
+    print 'Not normalized (r - r_mean) / r_sig'
+    print (r - r_mean) / r_sig
+    print 'Not normalized R'
+    print r
+    print np.ma.mean((r - r_mean) / r_sig)
+
+    with sns.axes_style('ticks'):
+        plt.scatter(x_ast_shifted, data_ast, marker='.')  # , label='PSF ast shifted', ls='--')
+        plt.scatter(x_str_cut, data_str_cut2, marker='*')  # , label='PSF star', ls='-.')
+        # plt.legend()
+        plt.show()
+
+    print x_ast_shifted[i:]
+    print x_str_cut[:-i]
 
 if __name__ == '__main__':
     main()
