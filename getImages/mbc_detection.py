@@ -14,6 +14,7 @@ import math
 import seaborn as sns
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
+from scipy.optimize import leastsq
 from shapely.geometry import Polygon
 
 import sys
@@ -90,7 +91,6 @@ def detect_mbc(family_name, object_name, expnum, i):
 
     # read in postage stamp header and data, do photometry to measure background (needed for saturation check)
     header, data, fits_file = fits_data(object_name, expnum, family_name)
-    bkg = get_bkg(data)
 
     # make sure that a mean star psf has been created form the OSSOS pipeline
     if not storage.get_status(expnum.strip('p'), header[_CCD].split('d')[1], 'mkpsf'):
@@ -122,16 +122,12 @@ def detect_mbc(family_name, object_name, expnum, i):
     fwhm = storage.get_fwhm(expnum.strip('p'), header[_CCD].split('d')[1])
 
     print '-- Getting asteroid data'
-    ast_data, x_ast = get_asteroid_data(asteroid_id, data, i, fwhm, bkg)
+    ast_data, x_ast = get_asteroid_data(asteroid_id, data, i, fwhm)
 
     print '-- Getting star data'
     star_data, x_star = get_star_data(expnum, header, asteroid_id, fits_file)
 
-    print '-- Mean star fit'
-    # meas_psf(star_data, x_star, amp=100, sigma=5., alpha=1.)
-    print '-- Asteroid fit'
-    # meas_psf(ast_data, x_ast, amp=100, sigma=12., alpha=10.)
-
+    print '-- Comparing PSFs'
     compare_psf(star_data, x_star, [np.argmax(star_data), float(len(x_star)) / 2, 8., 0.], ast_data, x_ast,
                 [np.argmax(ast_data), float(len(x_ast)) / 2., 5., 0.])
 
@@ -139,10 +135,15 @@ def detect_mbc(family_name, object_name, expnum, i):
 
 
 def compare_psf_jj(data_str, data_ast):
+    """
+    Calculate the difference between the two psfs
+    """
+
     data_str_sig = np.array(data_str) ** 0.5
     data_ast_sig = np.array(data_ast) ** 0.5
 
-    i = np.argmax(data_str) - np.argmax(data_ast)
+    i = np.argmax(data_str) - np.argmax(
+        data_ast)  # THIS IS WRONG, COMPARING TWO DIFFERENT INDEX SYSTEMS, not the ame size bins
     r = np.divide(data_ast[:i], data_str[:-i])
 
     r_sig = r * (np.divide(data_ast_sig[i:], data_ast[i:]) + np.divide(data_str_sig[:-i], data_str[:-i]))
@@ -234,28 +235,15 @@ def get_star_data(expnum, header, object_data, fits_file):
     # sum all the values in each ROW
     totaled = np.ma.sum(data_rot, axis=1)
 
-    # remove core from psf
-    x = []
-    y = []
-    midpt = int(len(totaled) / 2)
-    for i in range(len(totaled)):
-        if (i < midpt - _BUFFER3) or (i > midpt + _BUFFER3):
-            x.append(i)
-            y.append(totaled[i])
-
-    x = []
-    for i in range(len(totaled)):
-        x.append(i * header['NAXIS2'] / len(totaled))
-
-    return totaled, x
+    return totaled, range(len(totaled))
 
 
-def get_asteroid_data(object_data, data, i, fwhm, bkg):
+def get_asteroid_data(object_data, data, i, fwhm):
     """
     Calculate psf of asteroid, taking into acount trailing effect
     """
 
-    data_cutout, x = cutout_data(object_data, data, fwhm, bkg)
+    data_cutout, x = cutout_data(object_data, data, fwhm)
 
     hdu = fits.PrimaryHDU()
     hdu.data = data_cutout
@@ -264,14 +252,10 @@ def get_asteroid_data(object_data, data, i, fwhm, bkg):
     # sum all the values in each ROW
     totaled = np.ma.sum(data_cutout, axis=1)
 
-    x2 = []
-    for i in range(len(totaled)):
-        x2.append(i * x / len(totaled))
-
-    return totaled, x2
+    return totaled, range(len(totaled))
 
 
-def cutout_data(object_data, data, fwhm, bkg):
+def cutout_data(object_data, data, fwhm):
     """
     Cut a square around the polygon of the object, remove saturated rows, rotate so that the ellipse is parallel to the
     horizontal axis, then mask shape of ellipse around the object
@@ -279,6 +263,9 @@ def cutout_data(object_data, data, fwhm, bkg):
 
     # make sure there's only one object, otherwise pd.DataFrame.values won't work
     assert len(object_data) == 1
+
+    # subtract background
+    data_sub = get_bkg(data)
 
     # define parameters of the square to cut out from the polygon around the elongated object
     a = object_data['a'].values[0]
@@ -298,13 +285,10 @@ def cutout_data(object_data, data, fwhm, bkg):
     x_min, y_min, x_max, y_max = polygon.bounds
 
     data_obj = np.ones((len(range(int(y_min), int(y_max))), len(range(int(x_min), int(x_max)))))
-    np.copyto(data_obj, data[y_min:y_max, x_min:x_max])
-
-    print 'saturation level, bkg: ', bkg * _SATURATION_LEVEL, bkg
-    data_masked = data_obj  # remove_saturated_rows(data_obj, bkg * _SATURATION_LEVEL)
+    np.copyto(data_obj, data_sub[y_min:y_max, x_min:x_max])
 
     # rotate the data about the angle of elongation, semi major axis is along x as reading out rows (not columsn)
-    data_rot = pd.DataFrame(data=rotate(data_masked, th))
+    data_rot = pd.DataFrame(data=rotate(data_obj, th))
 
     rows, cols = data_rot.shape
     cx2 = int(cols / 2)
@@ -313,28 +297,12 @@ def cutout_data(object_data, data, fwhm, bkg):
     ell_buffer = _BUFFER1 * fwhm
     print 'buffer, fwhm: ', ell_buffer, fwhm
 
-    '''
-    # make a mask the shape of the ellipse THIS IS NOT RECCOMMENDED, NEED CORNER BACKGROUND FLUX
-    y_range = range(cy2 - int(b + ell_buffer), cy2 + int(b + ell_buffer))
-    mask = np.zeros((rows, cols))
-    for y in y_range:
-        x1 = int(cy2 - float(a + ell_buffer + 1) * (1. - (y - cy2) ** 2 / (b + ell_buffer + 1) ** 2) ** 0.5)
-        x2 = int(cy2 + float(a + ell_buffer + 1) * (1. - (y - cy2) ** 2 / (b + ell_buffer + 1) ** 2) ** 0.5)
-        for x in range(x1, x2):
-            mask[y][x] = 1
-
-    data_cutout = (np.multiply(data_rot, mask)).values
-    '''
-
     # instead of ellipse, try cutting out rectangle
     x_min2 = cx2 - (a + ell_buffer)
     x_max2 = cx2 + (a + ell_buffer)
     y_min2 = cy2 - (b + ell_buffer)
     y_max2 = cy2 + (a + ell_buffer)
     data_cutout = (data_rot.values)[y_min2:y_max2, x_min2:x_max2]
-
-    # np.savetxt('mask.txt', mask, fmt='%.0e')
-    np.savetxt('data_cutout.txt', data_cutout)  # , fmt='%.0e')
 
     return data_cutout, y_max2 - y_min2
 
@@ -377,70 +345,15 @@ def get_bkg(data):
     data2 = np.ones(data.shape)
     np.copyto(data2, data)
     try:
-        bkg = (sep.Background(data2)).globalback  # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
+        bkg = sep.Background(data2)  # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
 
     except ValueError:
         data3 = data2.byteswap(True).newbyteorder()
-        bkg = (sep.Background(data3)).globalback  # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
+        bkg = sep.Background(data3)       # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
 
-    return bkg
+    bkg.subfrom(data2)
 
-
-def meas_psf(data_obj, x, amp, sigma, alpha):
-    """
-    Apply a fit to the point spread function and return parameters of fit
-    """
-
-    # calculate best parameters for the gaussian fit
-    # x = data_obj.index
-    mid_pt = np.argmax(data_obj)
-
-    try:
-
-        fitparams, fitcovariances = curve_fit(gauss, x, data_obj, p0=[amp, mid_pt, sigma])
-        perr = np.sqrt(np.diag(fitcovariances))
-
-        fitparams2, fitcovariances2 = curve_fit(moffat, x, data_obj, p0=[amp, mid_pt, sigma, alpha])
-        perr2 = np.sqrt(np.diag(fitcovariances2))
-
-        # fitparams3, fitcovariances3 = curve_fit(lorentz, x, data_obj, p0=[amp, mid_pt, 1.])
-        # perr3 = np.sqrt(np.diag(fitcovariances3))
-
-        # fitparams4, fitcovariances4 = curve_fit(penny, x, data_obj, p0=[1.5, mid_pt, 7., 10.])
-        # perr4 = np.sqrt(np.diag(fitcovariances4))
-
-        print fitparams, perr
-        print fitparams2, perr2
-        # print fitparams3, perr3
-        # print fitparams4, perr4
-
-        x2 = range(x[0], x[-1])
-
-        gauss_fit = fitparams[0] * np.exp(-(x2 - fitparams[1]) ** 2 / (2. * fitparams[2] ** 2))
-
-        moffat_fit = fitparams2[0] * (1 + (x2 - fitparams2[1]) ** 2 / fitparams2[2] ** 2) ** (
-            -fitparams2[3])
-
-        # lorentz_fit = (fitparams3[0] * np.ones(len(x2))) / (
-        # 1 + (x2 / (fitparams3[1] * np.ones(len(x2)))) ** 2 + x2 * (fitparams3[2] * np.ones(len(x2))))
-
-        # penny_fit = fitparams4[0] * ((1. - fitparams4[2]) / (1. + (x / fitparams4[1]) ** 2 + fitparams4[2] * np.exp(-0.63 * x ** 2 / fitparams4[1] ** 2 + x * fitparams4[3])))
-
-        with sns.axes_style('ticks'):
-            plt.plot(x, data_obj, label='Object psf')
-            plt.plot(x2, gauss_fit, label='Gauss fit', ls='--')
-            plt.plot(x2, moffat_fit, label='Moffat fit', ls=':')
-            # plt.plot(x2, lorentz_fit, label='Lorentz fit', ls='-.')
-            # plt.plot(x, penny_fit, label='Penny fit', ls='-.')
-            plt.legend()
-            plt.show()
-
-    except Exception, e:
-        print 'ERROR: ', e
-        with sns.axes_style('ticks'):
-            plt.plot(x, data_obj, label='Object psf')
-            plt.legend()
-            plt.show()
+    return data2
 
 
 def gauss(x, *p):
@@ -453,26 +366,6 @@ def gauss2(x, *p):
     return np.exp(-(x - mu) ** 2 / (2. * sigma1 ** 2)) + np.exp(-(x - mu) ** 2 / (2. * sigma2 ** 2))
 
 
-def gauss3(x, *p):
-    mu, sigma2 = p
-    return np.exp(-(x - mu) ** 2 / (2. * star_sig ** 2)) + np.exp(-(x - mu) ** 2 / (2. * sigma2 ** 2))
-
-
-def moffat(x, *p):
-    amp, mu, sigma, alpha = p
-    return amp * (1. + (x - mu) ** 2 / (2. * sigma ** 2)) ** (-alpha)
-
-
-def lorentz(x, *p):
-    amp, p1, p2 = p
-    return amp / (1. + (x ** 2 / p1 ** 2) + (x * p2))
-
-
-def penny(x, *p):
-    amp, p1, p2, p3 = p
-    return amp * ((1. - p2) / (1. + (x / p1) ** 2) + p2 * np.exp(-0.693 * ((x / p1) ** 2 + x * p3)))
-
-
 def compare_psf(data_str, x_str, p_str, data_ast, x_ast, p_ast):
     """
     Compare psf of asteroid against mean of stars, check if anomaly in wings
@@ -482,9 +375,7 @@ def compare_psf(data_str, x_str, p_str, data_ast, x_ast, p_ast):
     # fit a gaussian to the asteroid psf, use parameter 'b' to zero the baseline, refit \
     # use parameter 'amp' to normalize, refit
     fitp_ast, fitco_ast = curve_fit(gauss, x_ast, data_ast, p_ast)
-    data_ast_sub = np.subtract(data_ast, fitp_ast[3])
-    fitp_ast2, fitco_ast2 = curve_fit(gauss, x_ast, data_ast_sub, p_ast)
-    data_ast_norm = np.divide(data_ast_sub, fitp_ast2[0])
+    data_ast_norm = np.divide(data_ast, fitp_ast[0])
     fitp_ast3, fitco_ast3 = curve_fit(gauss, x_ast, data_ast_norm, p_ast)
     perr_ast3 = np.sqrt(np.diag(fitco_ast3))
     gauss_ast = fitp_ast3[0] * np.exp(-(x_ast - fitp_ast3[1]) ** 2 / (2. * fitp_ast3[2] ** 2)) + fitp_ast3[3]
@@ -492,18 +383,17 @@ def compare_psf(data_str, x_str, p_str, data_ast, x_ast, p_ast):
     # fit a gaussian to the star psf, use parameter 'b' to zero the baseline, refit \
     # use parameter 'amp' to normalize, refit
     fitp_str, fitco_str = curve_fit(gauss, x_str, data_str, p_str)
-    data_str_sub = np.subtract(data_str, fitp_str[3])
-    fitp_str2, fitco_str2 = curve_fit(gauss, x_str, data_str_sub, p_ast)
-    data_str_norm = np.divide(data_str_sub, fitp_str2[0])
+    data_str_norm = np.divide(data_str, fitp_str[0])
     fitp_str3, fitco_str3 = curve_fit(gauss, x_str, data_str_norm, p_str)
     perr_str3 = np.sqrt(np.diag(fitco_str3))
     gauss_str = fitp_str3[0] * np.exp(-(x_str - fitp_str3[1]) ** 2 / (2. * fitp_str3[2] ** 2)) + fitp_str3[3]
 
-    # fit the star psf to a gaussian with the same mu (centerpoint) as the asteroid
-    gauss_str2 = fitp_str3[0] * np.exp(-(x_str - fitp_ast3[1]) ** 2 / (2. * fitp_str3[2] ** 2)) + fitp_str3[3]
     # fit the asteroid pst to a gaussian with the same mu (centerpoint) as the star
     gauss_ast2 = fitp_ast3[0] * np.exp(-(x_ast - fitp_str3[1]) ** 2 / (2. * fitp_ast3[2] ** 2)) + fitp_ast3[3]
 
+    print fitp_str, fitp_str3  # , perr_str3
+    print fitp_ast, fitp_ast3  # , perr_ast3
+    '''
     with sns.axes_style('ticks'):
         plt.plot(x_str, gauss_str, label='Gauss star', ls=':')
         plt.plot(x_str, data_str_norm, label='PSF star', ls='-')
@@ -519,53 +409,52 @@ def compare_psf(data_str, x_str, p_str, data_ast, x_ast, p_ast):
     with sns.axes_style('ticks'):
         print 'Plotting gausian fits of asteroid and star psfs'
         plt.plot(x_ast, gauss_ast2, label='Gauss ast', ls=':')
-        plt.plot(x_str, gauss_str, label='Gauss star', ls='-')
-        plt.legend()
-        plt.show()
-
-    print fitp_str3  # , perr_str3
-    print fitp_ast3  # , perr_ast3
-
-    # fit the asteroid psf as a sum of two gaussians with both sigmas as free parameters
-    fitp_ast4, fitco_ast4 = curve_fit(gauss2, x_ast, data_ast_norm, [p_ast[1], 0., fitp_str2[2]])
-    gauss2_ast = (np.exp(-(x_ast - fitp_ast4[0]) ** 2 / (2. * fitp_ast4[2] ** 2)) +
-                  np.exp(-(x_ast - fitp_ast4[0]) ** 2 / (2. * fitp_ast4[1] ** 2)))
-
-    global star_sig
-    star_sig = fitp_str3[2]
-    global str_mu
-    str_mu = fitp_str3[1]
-
-    # fit the asteroid psf as a sum of two gaussians with one sigma from the star psf, and the other a free parameter
-    fitp_ast5, fitco_ast5 = curve_fit(gauss3, x_ast, data_ast_norm, [0., 0.])
-    gauss3_ast = (np.exp(-(x_ast - str_mu) ** 2 / (2. * fitp_ast5[0] ** 2)) +
-                  np.exp(-(x_ast - str_mu) ** 2 / (2 * star_sig ** 2)))
-
-    print fitp_ast5
-
-    '''
-    with sns.axes_style('ticks'):
-        plt.plot(x_ast2, gauss3_ast, label='Gauss ast fit with str param', ls='-')
-        plt.plot(x_ast2, gauss2_ast, label='Gauss ast fit with any param', ls='-')
-        plt.plot(x_ast2, gauss_ast, label='Gauss ast fit', ls='-.')
-        plt.plot(x_ast, data_ast_norm, label='Object psf')
+        plt.plot(x_str, gauss_str, label='Gauss star', ls='-.')
         plt.legend()
         plt.show()
     '''
+    # calculate difference in peak values
+    print np.argmax(data_str_norm), np.argmax(data_ast_norm)
+    i = (x_str[np.argmax(data_str_norm)] - x_ast[np.argmax(data_ast_norm)])
+    x_ast_shifted = np.add(x_ast, i)
+    '''
+    with sns.axes_style('ticks'):
+        plt.plot(x_ast_shifted, data_ast_norm, label='PSF ast shifted', ls='--')
+        plt.plot(x_str, data_str_norm, label='PSF star', ls='-.')
+        plt.legend()
+        plt.show()
+    '''
+    i2 = fitp_str3[1] - fitp_ast3[1]
+    x_ast_shifted2 = np.add(x_ast, i2)
+    '''
+    with sns.axes_style('ticks'):
+        plt.plot(x_ast_shifted2, data_ast_norm, label='PSF ast shifted', ls='--')
+        plt.plot(x_str, data_str_norm, label='PSF star', ls='-.')
+        plt.legend()
+        plt.show()
+    '''
+    data_ast_longer = []
+    for i in data_str_norm:
+        try:
+            data_ast_longer.append(data_ast[i])
+        except:
+            data_ast_longer.append(0)
 
-    x_scale = []
-    for y in data_ast_norm[:len(data_ast_norm) / 2]:
-        x_scale.append(str_mu - np.sqrt(-np.log(y) * 2 * star_sig ** 2))
-    for y in data_ast_norm[len(data_ast_norm) / 2:]:
-        x_scale.append(str_mu + np.sqrt(-np.log(y) * 2 * star_sig ** 2))
+    guess = float(fitp_str3[1]) - float(fitp_ast3[1])
+    print guess, type(guess)
+    fitp_shift, fitco_shirt = curve_fit(shift, data_ast_longer, x_str, p0=guess)
+    print fitp_shift
+    x_ast_shifted2 = np.add(x_ast, fitp_shift[0])
 
     with sns.axes_style('ticks'):
-        plt.plot(x_str, data_str_norm, label='Star psf', ls='-.')
-        plt.plot(x_scale, data_ast_norm, label='Object psf scaled')
-        plt.plot(x_str, gauss_str, label='Gaussian fit of star')
+        plt.plot(x_ast_shifted2, data_ast_norm, label='PSF ast shifted', ls='--')
+        plt.plot(x_str, data_str_norm, label='PSF star', ls='-.')
         plt.legend()
         plt.show()
 
+def shift(x, *p):
+    shifty = p
+    return x + shifty
 
 if __name__ == '__main__':
     main()

@@ -688,7 +688,6 @@ def write_all_to_file(object_name, expnum_p, object_data, p_x, p_y, p_f, out_fil
     """
 
     if object_data is not None:
-        print object_data
         with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename), 'a') as outfile:
             for i in range(0, len(object_data)):
                 outfile.write('{} {}\n{} {} {} {} {} {} {} {}\n{} {} {} {}\n{} {} {} {} {}\n\n'.format(

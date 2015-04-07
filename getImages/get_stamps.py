@@ -82,7 +82,7 @@ def get_stamps(familyname, username, password, radius):
         table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['object', 'expnum', 'ra', 'dec'],
                               sep='\t', dtype={'Object': object, 'Image': object})
 
-    for row in range(len(table)):
+    for row in range(4669,len(table)):
         postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(table['object'][row],
                                                                  table['expnum'][row],
                                                                  table['ra'][row],
@@ -192,6 +192,7 @@ def cutout(username, password, family_name, object_name, image, ra, dec, radius,
         del small_fobj
     except requests.HTTPError, e:
         print 'Connection Failed, {}'.format(e)
+        write_to_file(object_name, image)
         return
 
     this_cutout2 = "CIRCLE ICRS {} {} {}".format(ra, dec, radius)
@@ -220,7 +221,7 @@ def cutout(username, password, family_name, object_name, image, ra, dec, radius,
             cutout_fobj = full_fobj[0]
     except requests.HTTPError, e:
         print 'Connection Failed, {}'.format(e)
-
+        write_to_file(object_name, image)
         return
 
     # print "Got this much data: {}".format(cutout_fobj.data.shape)
@@ -231,10 +232,18 @@ def cutout(username, password, family_name, object_name, image, ra, dec, radius,
     del cutout_fobj
     if test:
         return
-    storage.copy('{}/{}'.format(_STAMPS_DIR, postage_stamp_filename),
-                 '{}/{}'.format(vos_dir, postage_stamp_filename))
-    os.unlink('{}/{}'.format(_STAMPS_DIR, postage_stamp_filename))
+    try:
+        storage.copy('{}/{}'.format(_STAMPS_DIR, postage_stamp_filename),
+                     '{}/{}'.format(vos_dir, postage_stamp_filename))
+        os.unlink('{}/{}'.format(_STAMPS_DIR, postage_stamp_filename))
+    except Exception, e:
+        print e
 
+
+def write_to_file(object_name, expnum):
+
+    with open('{}/cutout_error.txt'.format(_IMAGE_LISTS), 'a') as outfile:
+        outfile.write('{} {}\n'.format(object_name, expnum))
 
 if __name__ == '__main__':
     main()

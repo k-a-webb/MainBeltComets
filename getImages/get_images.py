@@ -6,6 +6,7 @@ import requests
 import argparse
 
 import sys
+
 sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/ossos')
 # from ossos.ssos import Query WHY DOESNT THIS WORK?
 from ossos_scripts.ssos import Query
@@ -34,7 +35,7 @@ def main():
                         help="passband: default is r'")
     parser.add_argument("--family", '-f',
                         action="store",
-                        default="testfamily/testfamily_family.txt",
+                        default="all",
                         help='list of objects to query')
     parser.add_argument('--type',
                         default='p',
@@ -58,8 +59,9 @@ def get_image_info(familyname, filtertype='r', imagetype='p'):
     """
 
     # establish input/output
-    family_list = '{}/{}_family.txt'.format(_FAMILY_LISTS, familyname)
-    output = '{}/{}_images_new8.txt'.format(_OUTPUT_DIR, familyname)
+    # family_list = '{}/{}_family.txt'.format(_FAMILY_LISTS, familyname)
+    family_list = 'image_lists/all_images_new_missing.txt'
+    output = '{}/{}_images_new_found.txt'.format(_OUTPUT_DIR, familyname)
 
     if os.path.exists(family_list):
         with open(family_list) as infile:
@@ -86,14 +88,15 @@ def get_image_info(familyname, filtertype='r', imagetype='p'):
         outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(
             "Object", "Image", "Exp_time", "RA", "DEC", "time", "filter"))
 
-    print "----- \n Searching for images of objects in family {} from CFHT/Megacam from the MPC ephemeris".format(familyname)
+    print "----- \n Searching for images of objects in family {} from CFHT/Megacam from the MPC ephemeris".format(
+        familyname)
     print " with filter {} and exposure time of 287, 387, 500 seconds (OSSOS data) \n-----".format(filtertype)
 
     image_list = []
     expnum_list = []
     ra_list = []
     dec_list = []
-    for object_name in object_list[51101:len(object_list) - 1]: # skip header lines
+    for object_name in object_list[0:len(object_list) - 1]: # skip header lines
         query = Query(object_name, search_start_date=search_start_date, search_end_date=search_end_date)
 
         try:
@@ -149,7 +152,7 @@ def parse_ssois_return(ssois_return, object_name, imagetype, camera_filter='r.MP
         exp_times = [287, 387, 500]
         if (row['Telescope_Insturment'] == telescope_instrument) and \
                 (row['Filter'] == camera_filter) and \
-                int(row['Exptime']) in exp_times and \
+                        int(row['Exptime']) in exp_times and \
                 (row['Image'].endswith('{}'.format(imagetype))) and not \
                 str(row['Image_target']).startswith('WP'):
             good_table += 1

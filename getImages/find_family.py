@@ -45,8 +45,9 @@ def main():
 
     args = parser.parse_args()
 
-    find_family_members(args.family, args.output)
-
+    #find_family_members(args.family, args.output)
+    mba_list = find_by_status(args.status)
+    name_list = parse_for_all(mba_list, args.status, fromfile=False)
 
 def find_family_members(familyname, output=None):
     """
@@ -193,7 +194,7 @@ def get_all_astrometry():
     table_arrays = {'objectname': tableobject_list, 'semimajor_axis': a_list, 'eccentricity': e_list,
                     'inclination': i_list}
     all_objects_table = pd.DataFrame(data=table_arrays)
-    all_objects_table.to_csv('{}/astdys_table.txt'.format(_OUTPUT_DIR, status), sep='\t', encoding='utf-8')
+    all_objects_table.to_csv('{}/astdys_table.txt'.format(_OUTPUT_DIR), sep='\t', encoding='utf-8')
     # print all_objects_table
 
     return all_objects_table
@@ -232,7 +233,9 @@ def parse_for_all(mba_list, status=3, fromfile=True):
                      'inclination': i_list2}
     objects_table = pd.DataFrame(data=table2_arrays)
 
-    objects_table.to_csv('{}/all_data_status_{}.txt'.format(_OUTPUT_DIR, status), sep='\t', encoding='utf-8',
+    #objects_table.to_csv('{}/all_data_status_{}.txt'.format(_OUTPUT_DIR, status), sep='\t', encoding='utf-8',
+    #                     index=False)
+    objects_table.to_csv('{}/all_data_status_4.txt'.format(_OUTPUT_DIR), sep='\t', encoding='utf-8',
                          index=False)
 
     '''
