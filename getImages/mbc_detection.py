@@ -70,7 +70,7 @@ def main():
 
     table = pd.read_table('{}/434/434_output_test.txt'.format(_PHOT_DIR), sep=' ', dtype={'object': object})
 
-    for i in range(5, 6):  # len(input)):
+    for i in range(5, 16):  # len(input)):
 
         detect_mbc('434', table['object'][i], table['expnum'][i], i)
         print '\n'
@@ -121,15 +121,11 @@ def detect_mbc(family_name, object_name, expnum, i):
     # get fwhm from OSSOS VOSpace file
     fwhm = storage.get_fwhm(expnum.strip('p'), header[_CCD].split('d')[1])
 
-    print '-- Getting asteroid data'
-    ast_data, x_ast = get_asteroid_data(asteroid_id, data, i, fwhm)
-
-    print '-- Getting star data'
-    star_data, x_star = get_star_data(expnum, header, asteroid_id, fits_file)
+    ast_data = get_asteroid_data(asteroid_id, data, i, fwhm)
+    star_data = get_star_data(expnum, header, asteroid_id, fits_file)
 
     print '-- Comparing PSFs'
     compare_psf(star_data, ast_data, fwhm)
-
     # compare_psf_jj(star_data, ast_data, fwhm)
 
 
@@ -157,21 +153,8 @@ def fits_data(object_name, expnum, family_name):
                     data = hdulist[0].data
                     header = hdulist[0].header
 
-                    '''
-                    # Measure a spatially variable background of some image data (np array)
-                    try:
-                        bkg = sep.Background(data)  # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
-                    except ValueError:
-                        data = data.byteswap(True).newbyteorder()
-                        bkg = sep.Background(data)  # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
-
-                    # Directly subtract the background from the data in place
-                    bkg.subfrom(data)
-                    '''
-
-                    return header, data, fits_file
-
-                    # os.unlink(file_path)
+                os.unlink(file_path)
+                return header, data, fits_file
 
 
 def get_star_data(expnum, header, object_data, fits_file):
@@ -201,42 +184,21 @@ def get_star_data(expnum, header, object_data, fits_file):
 
     with fits.open(local_psf) as hdulist:
         data = hdulist[0].data
-        header = hdulist[0].header
 
     os.unlink(local_file_path)
 
-    # data_masked = remove_saturated_rows(data, 117)
-    data_masked = data
-
     th = math.degrees(object_data['theta'].values)
-    data_rot = rotate(data_masked, th)
-    # np.savetxt('star_rot.txt', data_rot, fmt='%.0e')
+    data_rot = rotate(data, th)
 
     # sum all the values in each ROW
     totaled = np.ma.sum(data_rot, axis=1)
 
-    return totaled, range(len(totaled))
+    return totaled
 
 
 def get_asteroid_data(object_data, data, i, fwhm):
     """
     Calculate psf of asteroid, taking into acount trailing effect
-    """
-
-    data_cutout, x = cutout_data(object_data, data, fwhm)
-    '''
-    hdu = fits.PrimaryHDU()
-    hdu.data = data_cutout
-    hdu.writeto('cutout_{}.fits'.format(i), clobber=True)
-    '''
-    # sum all the values in each ROW
-    totaled = np.ma.sum(data_cutout, axis=1)
-
-    return totaled, range(len(totaled))
-
-
-def cutout_data(object_data, data, fwhm):
-    """
     Cut a square around the polygon of the object, remove saturated rows, rotate so that the ellipse is parallel to the
     horizontal axis, then mask shape of ellipse around the object
     """
@@ -267,7 +229,7 @@ def cutout_data(object_data, data, fwhm):
     data_obj = np.ones((len(range(int(y_min), int(y_max))), len(range(int(x_min), int(x_max)))))
     np.copyto(data_obj, data_sub[y_min:y_max, x_min:x_max])
 
-    # rotate the data about the angle of elongation, semi major axis is along x as reading out rows (not columsn)
+    # rotate the data about the angle of elongation, semi major axis is along x as reading out rows (not columns)
     data_rot = pd.DataFrame(data=rotate(data_obj, th))
 
     rows, cols = data_rot.shape
@@ -284,44 +246,20 @@ def cutout_data(object_data, data, fwhm):
     y_max2 = cy2 + (a + ell_buffer)
     data_cutout = (data_rot.values)[y_min2:y_max2, x_min2:x_max2]
 
-    return data_cutout, y_max2 - y_min2
-
-
-def remove_saturated_rows(data, sat_level):
-    """
-    Check for saturation
-    """
-    print '-- Checking for saturated pixels'
-
-    data_pd = pd.DataFrame(data=data)
-
-    satur_row = []
-    mask = []
-    for row in data_pd.index:
-        data_row = data_pd.iloc[row, :]
-        sat = data_row.where(data_row > sat_level)
-        sat_np = sat.values
-        sat_masked = np.ma.masked_array(sat_np, np.isnan(sat_np))
-
-        if np.ma.sum(sat_masked) > 5 * sat_level:
-            satur_row.append(row)
-            mask_row = np.zeros(len(data_row))
-        else:
-            mask_row = np.ones(len(data_row))
-
-        mask.append(mask_row)
-
-    mask_arr = np.asarray(mask)
-    print 'saturated rows: ', satur_row
-    data_masked = np.multiply(data, mask_arr)
-
-    # data_pd.drop(data_pd.index[satur_row])
-    # print data_pd
-
-    return data_masked
+    '''
+    hdu = fits.PrimaryHDU()
+    hdu.data = data_cutout
+    hdu.writeto('cutout_{}.fits'.format(i), clobber=True)
+    '''
+    # sum all the values in each ROW
+    return np.ma.sum(data_cutout, axis=1)
 
 
 def get_bkg(data):
+    """
+    Subtract the background from the data
+    """
+
     data2 = np.ones(data.shape)
     np.copyto(data2, data)
     try:
@@ -337,34 +275,8 @@ def get_bkg(data):
 
 
 def gauss(x, *p):
-    amp, mu, sigma = p
-    return amp * np.exp(-(x - mu) ** 2 / (2. * sigma ** 2))
-
-
-def gauss2(x, *p):
-    mu, sigma1, sigma2 = p
-    return np.exp(-(x - mu) ** 2 / (2. * sigma1 ** 2)) + np.exp(-(x - mu) ** 2 / (2. * sigma2 ** 2))
-
-
-def moffat(x, *p):
-    amp, mu, sigma, alpha = p
-    return amp * (1. + (x - mu) ** 2 / (sigma ** 2)) ** (-alpha)
-
-
-def lorentz(x, *p):
-    amp, p1, p2, p3 = p
-    return amp / (1. + ((x - p1) ** 2 / p2 ** 2) + (x - p1) * p3)
-
-
-def penny(x, *p):
-    amp, p1, p2, p3, p4 = p
-    return amp * (1. / (1. + ((x - p1) ** 2 / p2 ** 2) + (x - p1) * p3) + np.exp(-(x - p1) ** 2 / (2. * p4 ** 2)))
-
-
-def penny2(x, *p):
-    p2, p3, p4 = p
-    return star_amp * (1. / (1. + (x - star_mu) ** 2 / p2 ** 2 + (x - star_mu) * p3) +
-                       np.exp(-(x - star_mu) ** 2 / (2. * p4 ** 2)))
+    amp, mu, sigma, b = p
+    return amp * np.exp(-(x - mu) ** 2 / (2. * sigma ** 2)) + b
 
 
 def compare_psf(data_str, data_ast, fwhm):
@@ -375,73 +287,40 @@ def compare_psf(data_str, data_ast, fwhm):
 
     x_ast = range(len(data_ast))
     x_str = range(len(data_str))
-    p_str = [np.argmax(data_str), float(len(x_str)) / 2, fwhm]
-    p_ast = [np.argmax(data_ast), float(len(x_ast)) / 2., fwhm - 1]
+    p_str = [np.argmax(data_str), float(len(x_str)) / 2, fwhm, 0.]
+    p_ast = [np.argmax(data_ast), float(len(x_ast)) / 2., fwhm - 1, 0.]
 
-    global star_amp
-    star_amp = np.argmax(data_str)
-    global star_mu
-    star_mu = float(len(x_str)) / 2
-
-    # fit a gaussian to the asteroid psf
+    # fit a gaussian to the asteroid psf and then the star psf
     fitp_ast, fitco_ast = curve_fit(gauss, x_ast, data_ast, p_ast)
-    perr_ast = np.sqrt(np.diag(fitco_ast))
-    gauss_ast = fitp_ast[0] * np.exp(-(x_ast - fitp_ast[1]) ** 2 / (2. * fitp_ast[2] ** 2))
-    print '>> Ast fit parameters and error'
-    print fitp_ast
-    print perr_ast
-
-    # fit a gaussian to the star psf
     fitp_str, fitco_str = curve_fit(gauss, x_str, data_str, p_str)
-    perr_str = np.sqrt(np.diag(fitco_str))
-    gauss_str = fitp_str[0] * np.exp(-np.subtract(x_str, fitp_str[1]) ** 2 / (2. * fitp_str[2] ** 2))
 
-    # fit a moffat to the star psf
-    fitp_str_moff, fitco_str_moff = curve_fit(moffat, x_str, data_str,
-                                              [np.amax(data_str), float(len(x_str)) / 2., 20, 40])
-    perr_str_moff = np.sqrt(np.diag(fitco_str_moff))
-    moffat_str = fitp_str_moff[0] * (1 + ((np.subtract(x_str, fitp_str_moff[1])) ** 2 / fitp_str_moff[1] ** 2)) ** (
-        -fitp_str_moff[2])
+    # shift the center of the star psf to the center of the asteroid psf
+    gauss_shift = fitp_str[1] - fitp_ast[1]
+    x_str_shift = np.subtract(x_str, gauss_shift)
 
-    # fit a lorentz to the star psf
-    fitp_str_lor, fitco_str_lor = curve_fit(lorentz, x_str, data_str,
-                                            [np.argmax(data_str), float(len(x_str)) / 2, fwhm / 2, 0.])
-    perr_str_lor = np.sqrt(np.diag(fitco_str_lor))  # one standard deviation error on parameters
-    lorentz_str = fitp_str_lor[0] / (1. + (np.subtract(x_str, fitp_str_lor[1]) ** 2 / fitp_str_lor[2] ** 2) +
-                                     np.multiply(x_str, fitp_str_lor[3]))
-    print '>> Star fit parameters and error - Lorentz'
-    print fitp_str_lor
-    print perr_str_lor
+    # interpolate the psf values of the star at the x values that there is data for the asteroid psf
+    y_str = lambda x: np.interp(x, x_str_shift, data_str)
+    y_str_at_ast_pts = []
+    for x in x_ast:
+        y_str_at_ast_pts.append(y_str(x))
 
-    # fit a penny to the star psf
-    # fitp_str_pen, fitco_str_pen = curve_fit(penny, x_str, data_str, [np.argmax(data_str), float(len(x_str)) / 2, fwhm / 2, 0.])
-    fitp_str_pen, fitco_str_pen = curve_fit(penny2, x_str, data_str, [fwhm / 2, 0., 0.])
-    perr_str_pen = np.sqrt(np.diag(fitco_str_pen))  # one standard deviation error on parameters
-    penny_str = star_amp * (1. / (1. + np.subtract(x_str, star_mu) ** 2 / fitp_str_pen[0] ** 2 + np.subtract(x_str, star_mu) * fitp_str_pen[1]) +
-                       np.exp(-np.subtract(x_str, star_mu) ** 2 / (2. * fitp_str_pen[2] ** 2)))
-    print '>> Star fit parameters and error - Penny'
-    print fitp_str_pen
-    print perr_str_pen
-
-
-    # fit the asteroid pst to a gaussian with the same mu (centerpoint) as the star
-    gauss_ast_centered = fitp_ast[0] * np.exp(-(x_ast - fitp_str[1]) ** 2 / (2. * fitp_ast[2] ** 2))
+    # calculate chi^2 for the ratio of the two psfs
+    data_str_sig = np.absolute(np.array(y_str_at_ast_pts)) ** 0.5
+    data_ast_sig = np.absolute(np.array(data_ast)) ** 0.5
+    i = np.argmax(data_ast)
+    r = np.divide(data_ast[i:], y_str_at_ast_pts[:-i])
+    r_sig = r * (np.divide(data_ast_sig[i:], data_ast[i:]) + np.divide(data_str_sig[:-i], y_str_at_ast_pts[:-i]))
+    r_mean = np.ma.mean(r)
+    print r
+    print r_sig
+    print '>> (r - r_mean) / r_sig'
+    print np.absolute((r - r_mean) / r_sig)
 
     with sns.axes_style('ticks'):
-        # plt.plot(x_str, gauss_str, label='Gauss star', ls=':')
-        plt.plot(x_str, data_str, label='PSF star', ls='-')
-        # plt.plot(x_str, moffat_str, label='Moffat star', ls='-.')
-        plt.plot(x_str, lorentz_str, label='Lorentz star', ls=':')
-        plt.plot(x_str, penny_str, label='Penny star', ls='-.')
-        plt.legend()
+        plt.scatter(x_ast, data_ast, marker='.', color='red')
+        plt.scatter(x_ast, y_str_at_ast_pts, marker='*')
+        plt.scatter(x_str_shift, data_str, marker='.')
         plt.show()
-    '''
-    with sns.axes_style('ticks'):
-        plt.plot(x_ast, gauss_ast, label='Gauss ast', ls=':')
-        plt.plot(x_ast, data_ast, label='PSF ast', ls='-')
-        plt.legend()
-        plt.show()
-    '''
 
 
 def compare_psf_jj(data_str, data_ast, fwhm):
