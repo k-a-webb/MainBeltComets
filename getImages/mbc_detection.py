@@ -351,19 +351,20 @@ def moffat(x, *p):
     return amp * (1. + (x - mu) ** 2 / (sigma ** 2)) ** (-alpha)
 
 
-def moffat2(x, *p):
-    sigma, alpha = p
-    return star_amp * (1. + (x - star_mu) ** 2 / (sigma ** 2)) ** (-alpha)
-
-
 def lorentz(x, *p):
     amp, p1, p2, p3 = p
-    return amp / (1. + ((x - p1) ** 2 / p2 ** 2) + (x * p3))
+    return amp / (1. + ((x - p1) ** 2 / p2 ** 2) + (x - p1) * p3)
 
 
 def penny(x, *p):
-    amp, p1, p2, p3 = p
-    return amp * ((1. - p2) / (1. + (x / p1) ** 2) + p2 * np.exp(-0.693 * ((x / p1) ** 2 + x * p3)))
+    amp, p1, p2, p3, p4 = p
+    return amp * (1. / (1. + ((x - p1) ** 2 / p2 ** 2) + (x - p1) * p3) + np.exp(-(x - p1) ** 2 / (2. * p4 ** 2)))
+
+
+def penny2(x, *p):
+    p2, p3, p4 = p
+    return star_amp * (1. / (1. + (x - star_mu) ** 2 / p2 ** 2 + (x - star_mu) * p3) +
+                       np.exp(-(x - star_mu) ** 2 / (2. * p4 ** 2)))
 
 
 def compare_psf(data_str, data_ast, fwhm):
@@ -378,9 +379,9 @@ def compare_psf(data_str, data_ast, fwhm):
     p_ast = [np.argmax(data_ast), float(len(x_ast)) / 2., fwhm - 1]
 
     global star_amp
-    star_amp = np.amax(data_str)
+    star_amp = np.argmax(data_str)
     global star_mu
-    star_mu = float(len(x_str)) / 2.
+    star_mu = float(len(x_str)) / 2
 
     # fit a gaussian to the asteroid psf
     fitp_ast, fitco_ast = curve_fit(gauss, x_ast, data_ast, p_ast)
@@ -389,50 +390,58 @@ def compare_psf(data_str, data_ast, fwhm):
     print '>> Ast fit parameters and error'
     print fitp_ast
     print perr_ast
-    print perr_ast[2] / fitp_ast[2] * 100
 
     # fit a gaussian to the star psf
     fitp_str, fitco_str = curve_fit(gauss, x_str, data_str, p_str)
     perr_str = np.sqrt(np.diag(fitco_str))
-    gauss_str = fitp_str[0] * np.exp(-(x_str - fitp_str[1]) ** 2 / (2. * fitp_str[2] ** 2))
-    print '>> Star fit parameters and error - Gauss'
-    print fitp_str
-    print perr_str
-    print perr_str[2] / fitp_str[2] * 100
+    gauss_str = fitp_str[0] * np.exp(-np.subtract(x_str, fitp_str[1]) ** 2 / (2. * fitp_str[2] ** 2))
 
-    # fitp_str_moff, fitco_str_moff = curve_fit(moffat2, x_str, data_str, [fwhm, 1.5])
-    fitp_str_moff, fitco_str_moff = curve_fit(moffat, x_str, data_str, [np.amax(data_str), float(len(x_str)) / 2., 20, 40])
+    # fit a moffat to the star psf
+    fitp_str_moff, fitco_str_moff = curve_fit(moffat, x_str, data_str,
+                                              [np.amax(data_str), float(len(x_str)) / 2., 20, 40])
     perr_str_moff = np.sqrt(np.diag(fitco_str_moff))
-    moffat_str = fitp_str_moff[0] * (1 + ((np.subtract(x_str, fitp_str_moff[1])) ** 2 / fitp_str_moff[1] ** 2)) ** (-fitp_str_moff[2])
-    moffat_str3 = fitp_str_moff[0] * (1 + ((np.subtract(x_str, fitp_str_moff[1])) ** 2 / 22. ** 2)) ** (-40)
-    print '>> Star fit parameters and error - Moffat'
-    print fitp_str_moff
-    print perr_str_moff
+    moffat_str = fitp_str_moff[0] * (1 + ((np.subtract(x_str, fitp_str_moff[1])) ** 2 / fitp_str_moff[1] ** 2)) ** (
+        -fitp_str_moff[2])
 
-    fitp_str_lor, fitco_str_lor = curve_fit(lorentz, x_str, data_str, [np.argmax(data_str), float(len(x_str)) / 2, fwhm, 1.])
-    perr_str_lor = np.sqrt(np.diag(fitco_str_lor))
-    lorentz_str = fitp_str_lor[0] / (
-    1. + (np.multiply(x_str, x_str) / fitp_str_lor[1] ** 2) + np.multiply(x_str, fitp_str_lor[2]))
+    # fit a lorentz to the star psf
+    fitp_str_lor, fitco_str_lor = curve_fit(lorentz, x_str, data_str,
+                                            [np.argmax(data_str), float(len(x_str)) / 2, fwhm / 2, 0.])
+    perr_str_lor = np.sqrt(np.diag(fitco_str_lor))  # one standard deviation error on parameters
+    lorentz_str = fitp_str_lor[0] / (1. + (np.subtract(x_str, fitp_str_lor[1]) ** 2 / fitp_str_lor[2] ** 2) +
+                                     np.multiply(x_str, fitp_str_lor[3]))
     print '>> Star fit parameters and error - Lorentz'
     print fitp_str_lor
     print perr_str_lor
+
+    # fit a penny to the star psf
+    # fitp_str_pen, fitco_str_pen = curve_fit(penny, x_str, data_str, [np.argmax(data_str), float(len(x_str)) / 2, fwhm / 2, 0.])
+    fitp_str_pen, fitco_str_pen = curve_fit(penny2, x_str, data_str, [fwhm / 2, 0., 0.])
+    perr_str_pen = np.sqrt(np.diag(fitco_str_pen))  # one standard deviation error on parameters
+    penny_str = star_amp * (1. / (1. + np.subtract(x_str, star_mu) ** 2 / fitp_str_pen[0] ** 2 + np.subtract(x_str, star_mu) * fitp_str_pen[1]) +
+                       np.exp(-np.subtract(x_str, star_mu) ** 2 / (2. * fitp_str_pen[2] ** 2)))
+    print '>> Star fit parameters and error - Penny'
+    print fitp_str_pen
+    print perr_str_pen
+
 
     # fit the asteroid pst to a gaussian with the same mu (centerpoint) as the star
     gauss_ast_centered = fitp_ast[0] * np.exp(-(x_ast - fitp_str[1]) ** 2 / (2. * fitp_ast[2] ** 2))
 
     with sns.axes_style('ticks'):
-        plt.plot(x_str, gauss_str, label='Gauss star', ls=':')
+        # plt.plot(x_str, gauss_str, label='Gauss star', ls=':')
         plt.plot(x_str, data_str, label='PSF star', ls='-')
-        plt.plot(x_str, moffat_str, label='Moffat star', ls='-.')
-        plt.plot(x_str, moffat_str3, label='Moffat3 star', ls='-')
-        plt.plot(x_str, lorentz_str, label='Lorentz star', ls='--')
+        # plt.plot(x_str, moffat_str, label='Moffat star', ls='-.')
+        plt.plot(x_str, lorentz_str, label='Lorentz star', ls=':')
+        plt.plot(x_str, penny_str, label='Penny star', ls='-.')
         plt.legend()
         plt.show()
+    '''
     with sns.axes_style('ticks'):
         plt.plot(x_ast, gauss_ast, label='Gauss ast', ls=':')
         plt.plot(x_ast, data_ast, label='PSF ast', ls='-')
         plt.legend()
         plt.show()
+    '''
 
 
 def compare_psf_jj(data_str, data_ast, fwhm):
