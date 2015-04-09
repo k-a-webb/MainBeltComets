@@ -301,10 +301,6 @@ def get_mag_rad(family_name, object_name):
     """
     Queries the JPL horizon's ephemeris for the variation in magnitude over the time eriod of all images of the object
     and for the radius of the error ellipse
-
-    :param family_name:
-    :param object_name:
-    :return:
     """
 
     if type(object_name) is not str:
@@ -356,7 +352,6 @@ def get_coords(object_name, time_start, time_end):
 
     assert type(object_name) is str
     orbital_elements, ephemerides = batch(object_name, time_start, time_end, step=1, su='m', params=[1, 3])
-    # ephemerides = query_jpl(object_name, time_start, time_end, params=[1, 3], step='1', su='m')
 
     mid = int(len(ephemerides) / 2)
     ra = ephemerides['R.A._(ICRF/J2000.0)'][mid]
@@ -371,7 +366,6 @@ def get_coords(object_name, time_start, time_end):
     dec_m = dec.split()[1]
     dec_s = dec.split()[2]
 
-    # c = SkyCoord('00h42m30s', '+41d12m00s', frame='icrs')
     c = SkyCoord('{}h{}m{}s'.format(ra_h, ra_m, ra_s), '{}d{}m{}s'.format(dec_d, dec_m, dec_s), frame='icrs')
     ra_deg = c.ra.degree
     dec_deg = c.dec.degree
@@ -399,10 +393,6 @@ def append_table(objs, pvwcs, zeropt, p_ra, p_dec):
                           'theta': objs['theta'],
                           'flux': objs['flux']
                           })
-
-    # a2 = 0.25 * math.sqrt((xmax - xmin) ** 2 + (ymax - ymin) ** 2)
-    # b2 = math.sqrt((x - math.sqrt(x2)) ** 2 + (y + math.sqrt(y2)) ** 2)
-    # f = math.sqrt(a**2 - b**2)
 
     ra_list = []
     dec_list = []
@@ -571,7 +561,7 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
         print '>> Both conditions met by:'
         both_cond2 = add_to_object_table(both_cond, 'yes', 'yes')
         print both_cond2
-        write_all_to_file(object_name, expnum, both_cond2, p_x, p_y, f_pix,
+        write_all_to_file(object_name, expnum, both_cond2, p_x, p_y, f_pix, mean,
                           out_filename='{}_all_output.txt'.format(family_name), family_name=family_name)
         if len(both_cond) > 1:
             print '>> More than one object identified, writing to file <<'
@@ -682,7 +672,7 @@ def write_to_file(object_name, expnum_p, object_data, header, out_filename, fami
         print "WARNING: Could not identify object {} in image".format(object_name, expnum_p)
 
 
-def write_all_to_file(object_name, expnum_p, object_data, p_x, p_y, p_f, out_filename, family_name):
+def write_all_to_file(object_name, expnum_p, object_data, p_x, p_y, p_f, p_mag, out_filename, family_name):
     """
     Prints to outfile
     """
@@ -690,12 +680,13 @@ def write_all_to_file(object_name, expnum_p, object_data, p_x, p_y, p_f, out_fil
     if object_data is not None:
         with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename), 'a') as outfile:
             for i in range(0, len(object_data)):
-                outfile.write('{} {}\n{} {} {} {} {} {} {} {}\n{} {} {} {}\n{} {} {} {} {}\n\n'.format(
+                outfile.write('{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n'.format(
                     object_name, expnum_p, p_x, p_y, object_data['x'][i], object_data['y'][i],
                     object_data['x_mid'][i], object_data['y_mid'][i],
                     object_data['x'][i] - object_data['x_mid'][i], object_data['y'][i] - object_data['y_mid'][i],
                     object_data['a'][i], object_data['b'][i], object_data['a2'][i], object_data['b2'][i],
                     p_f, object_data['f'][i], object_data['f2'][i],
+                    p_mag, object_data['mag'],
                     object_data['consistent_f'][i], object_data['consistent_mag'][i]))
 
     else:
