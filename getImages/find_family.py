@@ -36,7 +36,7 @@ def main():
                         help='Location and name of output file containing object names')
     parser.add_argument("--status",
                         action='store',
-                        default=3,
+                        default=4,
                         help='Family status, options: 0 not in family, 1 inner MB, 2 MB, 3 outter MB')
     parser.add_argument('--fromfile',
                         action='store',
@@ -45,9 +45,10 @@ def main():
 
     args = parser.parse_args()
 
-    #find_family_members(args.family, args.output)
+    # find_family_members(args.family, args.output)
     mba_list = find_by_status(args.status)
-    name_list = parse_for_all(mba_list, args.status, fromfile=False)
+    name_list = parse_for_all(mba_list, args.status, fromfile=True)
+
 
 def find_family_members(familyname, output=None):
     """
@@ -200,13 +201,13 @@ def get_all_astrometry():
     return all_objects_table
 
 
-def parse_for_all(mba_list, status=3, fromfile=True):
+def parse_for_all(mba_list, status, fromfile=True):
     """
     Queries the AstDys database for all objects of a specified status and gets astrometry
     """
 
     if fromfile is True:
-        all_objects_table = pd.read_table('{}/astdys_table.txt'.format(_OUTPUT_DIR), sep='\t')
+        all_objects_table = pd.read_table('{}/astdys_table.txt'.format(_OUTPUT_DIR), sep='\t', dtype={'objectname': object})
     else:
         all_objects_table = get_all_astrometry()
 
@@ -233,9 +234,7 @@ def parse_for_all(mba_list, status=3, fromfile=True):
                      'inclination': i_list2}
     objects_table = pd.DataFrame(data=table2_arrays)
 
-    #objects_table.to_csv('{}/all_data_status_{}.txt'.format(_OUTPUT_DIR, status), sep='\t', encoding='utf-8',
-    #                     index=False)
-    objects_table.to_csv('{}/all_data_status_4.txt'.format(_OUTPUT_DIR), sep='\t', encoding='utf-8',
+    objects_table.to_csv('{}/all_data_status_{}.txt'.format(_OUTPUT_DIR, status), sep='\t', encoding='utf-8',
                          index=False)
 
     '''
