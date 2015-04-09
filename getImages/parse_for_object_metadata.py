@@ -1,3 +1,6 @@
+activate_this = '/Users/admin/Desktop/MainBeltComets/bin/activate_this.py'
+execfile(activate_this, dict(__file__=activate_this))
+
 import os
 import requests
 from astropy.table import Table
@@ -8,10 +11,17 @@ import argparse
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+_DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
+_FAMILY_LISTS = '{}/family_lists'.format(_DIR_PATH_BASE)
+_STAMPS_DIR = '{}/postage_stamps'.format(_DIR_PATH_BASE)
+_IMAGE_LISTS = '{}/image_lists'.format(_DIR_PATH_BASE)
+_OUTPUT_DIR = '{}/phot_output'.format(_DIR_PATH_BASE)
+
+_BASE_URL = 'http://hamilton.dm.unipi.it/~astdys2/propsynth/numb.syn'
+
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Get metadata')
+    parser = argparse.ArgumentParser(description='Get metadata')
     parser.add_argument("--family", '-f',
                         action="store",
                         default='all',
@@ -19,78 +29,86 @@ def main():
 
     args = parser.parse_args()
 
-    # get_metadata_for_images(args.family)
-    get_metadata_for_family(args.family)
+    # parse_metadata(args.family)
+    get_metadata_for_images(args.family)
+    # get_metadata_for_family(args.family)
 
 
 def get_metadata_for_images(familyname):
+    """
+    Get orbital information from image list
+    """
+
     print '----- Searching for orbital data for objects with family designations -----'
 
-    if not os.path.exists('asteroid_families/{}/{}_images.txt'.format(familyname, familyname)):
-        objects, all_images = get_all_image_list()
-    else:
-        objects = []
-        with open('asteroid_families/{}/{}_images.txt'.format(familyname, familyname)) as infile:
-            next(infile)
-            for line in infile:
-                objects.append(line.split('\t')[0])
+    try:
+        image_table = pd.read_table('{}/{}_images.txt'.format(_IMAGE_LISTS, familyname), sep='\t',
+                                    dtype={'Object': object})
+        object_list = image_table['Object'].values
+        print 'success'
+    except Exception, e:
+        print e
+        return
 
-    counts = Counter(objects)
-    new_objects = []
+    counts = Counter(object_list)
+    object_list_no_repeats = []
     for item in counts:
-        new_objects.append(item)
+        object_list_no_repeats.append(item)
 
-    base_url = 'http://hamilton.dm.unipi.it/~astdys2/propsynth/numb.syn'
-    r = requests.get(base_url)
-    r.raise_for_status()
+    try:
+        astdys_table = pd.read_table('{}/astdys_table.txt'.format(_FAMILY_LISTS), sep='\t',
+                                     dtype={'objectname': object})
+        print 'success'
+    except:
+        print '-- Querying AtsDys Database'
+        r = requests.get(_BASE_URL)
+        r.raise_for_status()
 
-    tableobject_list = []
-    a_list = []
-    e_list = []
-    sini_list = []
+        tableobject_list = []
+        a_list = []
+        e_list = []
+        sini_list = []
 
-    table = r.content
-    table_lines = table.split('\n')
-    for line in table_lines[2:]:
-        if len(line.split()) > 0:
-            tableobject_list.append(line.split()[0])
-            a_list.append(float(line.split()[2]))
-            e_list.append(float(line.split()[3]))
-            sini_list.append(float(line.split()[4]))
-    table_arrays = {'objectname': tableobject_list, 'semimajor_axis': a_list, 'eccentricity': e_list,
-                    'sin_inclination': sini_list}
-    all_objects_table = pd.DataFrame(data=table_arrays)
-    # print all_objects_table
+        table = r.content
+        table_lines = table.split('\n')
+        for line in table_lines[2:]:
+            if len(line.split()) > 0:
+                tableobject_list.append(line.split()[0])
+                a_list.append(float(line.split()[2]))
+                e_list.append(float(line.split()[3]))
+                sini_list.append(float(line.split()[4]))
+        i_list = np.degrees(np.arcsin(sini_list))
+        table_arrays = {'objectname': tableobject_list, 'semimajor_axis': a_list, 'eccentricity': e_list,
+                        'inclination': i_list}
+        astdys_table = pd.DataFrame(data=table_arrays)
+        # print all_objects_table
 
     a_list2 = []
     e_list2 = []
-    sini_list2 = []
+    i_list2 = []
     name_list = []
     occurance = []
 
-    for objectname in new_objects[1:]:
-        occur = objects.count(objectname)
+    for objectname in object_list_no_repeats[1:]:
+        occur = counts['{}'.format(objectname)]
         try:
-            index = all_objects_table.query('objectname == "{}"'.format(objectname))
+            index = astdys_table.query('objectname == "{}"'.format(objectname))
             name_list.append(objectname)
             a_list2.append(float(index['semimajor_axis']))
             e_list2.append(float(index['eccentricity']))
-            sini_list2.append(float(index['sin_inclination']))
+            i_list2.append(float(index['inclination']))
             occurance.append(occur)
         except Exception, e:
             print 'Could not find object {}'.format(objectname)
 
-    i_list2 = np.degrees(np.arcsin(sini_list2))
+    object_data = pd.DataFrame({'objectname': name_list,
+                                'occurance': occurance,
+                                'semimajor_axis': a_list2,
+                                'eccentricity': e_list2,
+                                'inclination': i_list2})
+    object_data.to_csv('{}/{}_metadata.txt'.format(_IMAGE_LISTS, familyname), sep='\t', encoding='utf-8', index=False)
 
-    objects_in_fam_table = pd.DataFrame({'objectname': name_list,
-                                         'occurance': occurance,
-                                         'semimajor_axis': a_list2,
-                                         'eccentricity': e_list2,
-                                         'inclination': i_list2})
-    objects_in_fam_table.to_csv('asteroid_families/{}/{}_metadata.txt'.format(familyname, familyname), sep='\t',
-                                encoding='utf-8', index=False)
-
-    return objects_in_fam_table
+    return object_data
 
 
 def get_metadata_for_family(family_name):
@@ -136,38 +154,15 @@ def get_metadata_for_family(family_name):
                         encoding='utf-8', index=False)
 
 
-def get_all_image_list():
-    family_list = []
-    objects = []
-    all_images = []
-
-    with open('asteroid_families/families_with_images.txt') as infile:
-        for line in infile:
-            family_list.append(line.strip('\n'))
-
-    for familyname in family_list:
-        with open('asteroid_families/{}/{}_images.txt'.format(familyname, familyname), 'r+') as infile:
-            next(infile)
-            for line in infile:
-                objects.append(line.split(' ')[0])
-                all_images.append(line)
-
-    with open('asteroid_families/all_images.txt', 'w') as outfile:
-        for item in all_images:
-            outfile.write("{}".format(item))
-
-    return objects
-
-
 def parse_metadata(familyname):
-    if os.path.exists('asteroid_families/{}/{}_metadata.txt'.format(familyname, familyname)):
-        data_table = pd.read_table('asteroid_families/{}/{}_metadata.txt'.format(familyname, familyname))
+    if os.path.exists('{}/{}_metadata.txt'.format(_IMAGE_LISTS, familyname)):
+        data_table = pd.read_table('{}/{}_metadata.txt'.format(_IMAGE_LISTS, familyname))
     else:
-        data_table = get_metadata(familyname)
+        data_table = get_metadata_for_images(familyname)
 
     print data_table.sort('occurance')
 
-    '''frequency = []    
+    frequency = []
     for i in range(1, 34):
         occ = data_table.query('occurance == {}'.format(i))
         frequency.append(float(len(occ)))
@@ -179,7 +174,6 @@ def parse_metadata(familyname):
         plt.ylabel('Number of asteroids')
         plt.xlabel('Observation occurance')
         plt.show()
-   '''
 
 
 if __name__ == '__main__':
