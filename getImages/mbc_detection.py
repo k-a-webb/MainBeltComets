@@ -14,6 +14,7 @@ import math
 import seaborn as sns
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
+from scipy.stats import linregress
 from scipy.stats import chisquare
 from shapely.geometry import Polygon
 
@@ -37,7 +38,7 @@ _TARGET = 'OBJECT'
 _APERTURE = 10.0
 _THRESHOLD = 3.0
 _BUFFER1 = 2.5  # used in the shape of the ellipse
-_BUFFER2 = 20.  # used in the intial cutout of the polygon
+_BUFFER2 = 40.  # used in the intial cutout of the polygon
 _BUFFER3 = 5  # masking center of star psf
 _SATURATION_LEVEL = 3  # sigma? above background
 _SATURATION_THRESHOLD = 3  # maximum allowed pixels above saturation level
@@ -70,7 +71,7 @@ def main():
 
     table = pd.read_table('{}/434/434_output_test.txt'.format(_PHOT_DIR), sep=' ', dtype={'object': object})
 
-    for i in range(5, 16):  # len(input)):
+    for i in range(5, 6):  # len(input)):
 
         detect_mbc('434', table['object'][i], table['expnum'][i], i)
         print '\n'
@@ -122,11 +123,10 @@ def detect_mbc(family_name, object_name, expnum, i):
     fwhm = storage.get_fwhm(expnum.strip('p'), header[_CCD].split('d')[1])
 
     ast_data = get_asteroid_data(asteroid_id, data, i, fwhm)
-    star_data = get_star_data(expnum, header, asteroid_id, fits_file)
+    star_data = get_star_data(expnum, header, asteroid_id, fits_file, data)
 
     print '-- Comparing PSFs'
     compare_psf(star_data, ast_data, fwhm)
-    # compare_psf_jj(star_data, ast_data, fwhm)
 
 
 def fits_data(object_name, expnum, family_name):
@@ -157,7 +157,7 @@ def fits_data(object_name, expnum, family_name):
                 return header, data, fits_file
 
 
-def get_star_data(expnum, header, object_data, fits_file):
+def get_star_data(expnum, header, object_data, fits_file, exp_data):
     """
     From ossos psf fitted image, calculate line profile
     """
@@ -186,14 +186,23 @@ def get_star_data(expnum, header, object_data, fits_file):
         data = hdulist[0].data
 
     os.unlink(local_file_path)
+    os.unlink(local_psf)
 
     th = math.degrees(object_data['theta'].values)
     data_rot = rotate(data, th)
+    data_rot = np.ma.masked_where(data_rot == 0, data_rot)
 
-    # sum all the values in each ROW
-    totaled = np.ma.sum(data_rot, axis=1)
+    # add in background value of exposure instead of subtracting it from the asteroid PSF
+    data2 = np.ones(exp_data.shape)
+    np.copyto(data2, exp_data)
+    try:
+        bkg = sep.Background(data2).globalback
+    except ValueError:
+        data3 = data2.byteswap(True).newbyteorder()
+        bkg = sep.Background(data3).globalback
+    data_rot += bkg
 
-    return totaled
+    return np.ma.mean(data_rot, axis=1)
 
 
 def get_asteroid_data(object_data, data, i, fwhm):
@@ -206,13 +215,10 @@ def get_asteroid_data(object_data, data, i, fwhm):
     # make sure there's only one object, otherwise pd.DataFrame.values won't work
     assert len(object_data) == 1
 
-    # subtract background
-    data_sub = get_bkg(data)
-
     # define parameters of the square to cut out from the polygon around the elongated object
     a = object_data['a'].values[0]
     b = object_data['b'].values[0]
-    th = math.degrees(object_data['theta'].values)
+    th = object_data['theta'].values
     cx = object_data['x'].values
     cy = object_data['y'].values
     a_x = a * math.cos(th)
@@ -227,10 +233,13 @@ def get_asteroid_data(object_data, data, i, fwhm):
     x_min, y_min, x_max, y_max = polygon.bounds
 
     data_obj = np.ones((len(range(int(y_min), int(y_max))), len(range(int(x_min), int(x_max)))))
-    np.copyto(data_obj, data_sub[y_min:y_max, x_min:x_max])
+    np.copyto(data_obj, data[y_min:y_max, x_min:x_max])
 
     # rotate the data about the angle of elongation, semi major axis is along x as reading out rows (not columns)
-    data_rot = pd.DataFrame(data=rotate(data_obj, th))
+    data_rot = pd.DataFrame(data=rotate(data_obj, math.degrees(th)))
+
+    # subtract background
+    # data_rot = get_bkg(data_rot)
 
     rows, cols = data_rot.shape
     cx2 = int(cols / 2)
@@ -239,20 +248,34 @@ def get_asteroid_data(object_data, data, i, fwhm):
     ell_buffer = _BUFFER1 * fwhm
     print 'buffer, fwhm: ', ell_buffer, fwhm
 
+    # cut out a circular aperture around the object
+    mask = np.ones(data_rot.shape, dtype=bool)
+    x_range = range(cx2 - int(a + ell_buffer), cx2 + int(a + ell_buffer))
+    for x in x_range:
+        y1 = int(cy2 - ((a + ell_buffer) ** 2 - (x - cx2) ** 2) ** 0.5)
+        y2 = int(cy2 + ((a + ell_buffer) ** 2 - (x - cx2) ** 2) ** 0.5)
+        for y in range(y1, y2):
+            mask[y][x] = False
+
+    data_cutout = np.ma.array(data_rot, mask=mask)
+
+    '''
     # instead of ellipse, try cutting out rectangle
     x_min2 = cx2 - (a + ell_buffer)
     x_max2 = cx2 + (a + ell_buffer)
     y_min2 = cy2 - (b + ell_buffer)
     y_max2 = cy2 + (a + ell_buffer)
     data_cutout = (data_rot.values)[y_min2:y_max2, x_min2:x_max2]
-
+    '''
     '''
     hdu = fits.PrimaryHDU()
-    hdu.data = data_cutout
+    hdu.data = np.ma.fix_invalid(data_cutout, fill_value=0)
     hdu.writeto('cutout_{}.fits'.format(i), clobber=True)
     '''
-    # sum all the values in each ROW
-    return np.ma.sum(data_cutout, axis=1)
+    data_mean = np.ma.mean(data_cutout, axis=1)
+
+    # take the mean of all the values in each ROW
+    return data_mean[np.nonzero(np.ma.fix_invalid(data_mean, fill_value=0))[0]]
 
 
 def get_bkg(data):
@@ -287,8 +310,8 @@ def compare_psf(data_str, data_ast, fwhm):
 
     x_ast = range(len(data_ast))
     x_str = range(len(data_str))
-    p_str = [np.argmax(data_str), float(len(x_str)) / 2, fwhm, 0.]
-    p_ast = [np.argmax(data_ast), float(len(x_ast)) / 2., fwhm - 1, 0.]
+    p_str = [np.amax(data_str), float(len(x_str)) / 2, fwhm, 0.]
+    p_ast = [np.amax(data_ast), float(len(x_ast)) / 2., fwhm, 0.]
 
     # fit a gaussian to the asteroid psf and then the star psf
     fitp_ast, fitco_ast = curve_fit(gauss, x_ast, data_ast, p_ast)
@@ -300,54 +323,45 @@ def compare_psf(data_str, data_ast, fwhm):
 
     # interpolate the psf values of the star at the x values that there is data for the asteroid psf
     y_str = lambda x: np.interp(x, x_str_shift, data_str)
-    data_str_at_astpts = []
-    for x in x_ast:
-        data_str_at_astpts.append(y_str(x))
+    data_str_at_astpts = y_str(x_ast)
 
-    # print ">> Ratio test ast/str"
+    print ">> Ratio test ast/str"
     data_str_sig = np.absolute(np.array(data_str_at_astpts)) ** 0.5
     data_ast_sig = np.absolute(np.array(data_ast)) ** 0.5
-    # i = np.argmax(data_ast)
     r = np.divide(data_ast, data_str_at_astpts)
     r_sig = r * (np.divide(data_ast_sig, data_ast) + np.divide(data_str_sig, data_str_at_astpts))
-    # print r
-    # print np.ma.mean(r)
-    # print '>> (r - r_mean) / r_sig'
-    # print (abs(r) - np.ma.mean(r)) / r_sig
-
-    print ">> Ratio test str/ast"
-    r2 = np.divide(data_str_at_astpts, data_ast)
-    r_sig2 = r2 * (np.divide(data_ast_sig, data_ast) + np.divide(data_str_sig, data_str_at_astpts))
-    r_sig3 = r2 * np.sqrt(
-        np.square(np.divide(data_ast_sig, data_ast)) + np.square(np.divide(data_str_sig, data_str_at_astpts)))
-    print r2
-    print np.ma.mean(r2)
-    print np.median(r2)
-    print np.ma.std(r2)
+    r_sig2 = r * np.sqrt(np.square(np.divide(data_ast_sig, data_ast)) +
+                         np.square(np.divide(data_str_sig, data_str_at_astpts)))
+    print r.compressed()
+    print np.ma.mean(r)
+    print np.ma.mean(np.sort(r)[2:-3])
+    print np.ma.median(r)
     print '>> (r - r_mean) / r_sig'
-    print (abs(r2) - np.ma.mean(r2)) / r_sig2
-    print np.median((abs(r2) - np.ma.mean(r2)) / r_sig2)
-    print (abs(r2) - np.median(r2)) / r_sig2
-    print np.median((abs(r2) - np.median(r2)) / r_sig2)
-
-    # make a constant ratio multiple of asteroid psf to compare with star psf
-    p_str = np.multiply(data_ast, np.ma.mean(r2))
+    print (abs(r) - np.ma.mean(r)) / r_sig
+    print np.ma.mean((abs(r) - np.ma.mean(r)) / r_sig)
+    print (abs(r) - np.ma.mean(np.sort(r)[2:-3])) / r_sig
+    print np.ma.mean((abs(r) - np.ma.mean(np.sort(r)[2:-3])) / r_sig)
 
     # normalize the star PSF to the height of the asteroid PSF
-    data_str_norm = np.multiply(data_str_at_astpts, np.amax(data_ast) / np.amax(data_str_at_astpts))
-    '''
+
+    ast_baseline = np.mean(np.sort(data_ast)[:8])
+    str_baseline = np.mean(np.sort(data_str)[:8])
+    data_str_norm = np.multiply(data_str_at_astpts,
+                                np.amax(data_ast - ast_baseline) / np.amax(data_str_at_astpts - str_baseline))
+    data_str_like_ast = data_str_norm + ast_baseline - np.mean(np.sort(data_str_norm)[:8])
+
+    slope, intercept, r_value, p_value, std_err = linregress(data_ast, data_str_at_astpts)
+    data_str_normed = slope * data_str_at_astpts + intercept
+
     with sns.axes_style('ticks'):
         plt.plot(x_ast, data_ast, label='Ast PSF', ls='--')
-        # plt.scatter(x_ast, data_ast, marker='.')
-        plt.plot(x_ast, data_str_at_astpts, label='Interp star PSF', ls='-.')
-        # plt.scatter(x_ast, data_str_at_astpts, marker='*')
-        plt.plot(x_ast, p_str, label='Constant multiple of ast PSF', ls='-')
+        plt.plot(x_str_shift, data_str, label='Star PSF', ls=':')
         plt.legend()
         plt.show()
-    '''
+
     with sns.axes_style('ticks'):
         plt.plot(x_ast, data_ast, label='Ast PSF', ls='--')
-        plt.plot(x_ast, data_str_norm, label='Interp star PSF', ls='-.')
+        plt.plot(x_ast, data_str_like_ast, label='Interp star PSF', ls='-.')
         plt.legend()
         plt.show()
 
