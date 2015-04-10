@@ -318,22 +318,24 @@ def compare_psf(data_str, data_ast, fwhm):
     print ">> Ratio test str/ast"
     r2 = np.divide(data_str_at_astpts, data_ast)
     r_sig2 = r2 * (np.divide(data_ast_sig, data_ast) + np.divide(data_str_sig, data_str_at_astpts))
-    r_sig3 = r2 * np.sqrt(np.square(np.divide(data_ast_sig, data_ast)) + np.square(np.divide(data_str_sig, data_str_at_astpts)))
-    print data_str_at_astpts
-    print data_ast
-
+    r_sig3 = r2 * np.sqrt(
+        np.square(np.divide(data_ast_sig, data_ast)) + np.square(np.divide(data_str_sig, data_str_at_astpts)))
     print r2
     print np.ma.mean(r2)
+    print np.median(r2)
+    print np.ma.std(r2)
     print '>> (r - r_mean) / r_sig'
     print (abs(r2) - np.ma.mean(r2)) / r_sig2
-    print (abs(r2) - np.ma.mean(r2)) / r_sig3
+    print np.median((abs(r2) - np.ma.mean(r2)) / r_sig2)
+    print (abs(r2) - np.median(r2)) / r_sig2
+    print np.median((abs(r2) - np.median(r2)) / r_sig2)
 
     # make a constant ratio multiple of asteroid psf to compare with star psf
     p_str = np.multiply(data_ast, np.ma.mean(r2))
 
     # normalize the star PSF to the height of the asteroid PSF
     data_str_norm = np.multiply(data_str_at_astpts, np.amax(data_ast) / np.amax(data_str_at_astpts))
-
+    '''
     with sns.axes_style('ticks'):
         plt.plot(x_ast, data_ast, label='Ast PSF', ls='--')
         # plt.scatter(x_ast, data_ast, marker='.')
@@ -342,7 +344,7 @@ def compare_psf(data_str, data_ast, fwhm):
         plt.plot(x_ast, p_str, label='Constant multiple of ast PSF', ls='-')
         plt.legend()
         plt.show()
-
+    '''
     with sns.axes_style('ticks'):
         plt.plot(x_ast, data_ast, label='Ast PSF', ls='--')
         plt.plot(x_ast, data_str_norm, label='Interp star PSF', ls='-.')
