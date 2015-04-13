@@ -17,9 +17,9 @@ from scipy.optimize import curve_fit
 from scipy.stats import linregress
 from scipy.stats import chisquare
 from shapely.geometry import Polygon
-
 import sys
 
+client = vos.Client()
 sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/ossos')
 from ossos import storage
 from ossos import wcs
@@ -29,23 +29,20 @@ _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
 _STAMPS_DIR = '{}/postage_stamps'.format(_DIR_PATH_BASE)
 _OSSOS_PATH_BASE = 'vos:OSSOS/dbimages'
 _PHOT_DIR = '{}/phot_output'.format(_DIR_PATH_BASE)
-_PSF_DIR = '{}/psf_output'.format(_DIR_PATH_BASE)
 
 _CCD = 'EXTNAME'
 _ZMAG = 'PHOTZP'
 _TARGET = 'OBJECT'
 
-_APERTURE = 10.0
-_THRESHOLD = 3.0
-_BUFFER1 = 2.5  # used in the shape of the ellipse
-_BUFFER2 = 40.  # used in the intial cutout of the polygon
-_BUFFER3 = 5  # masking center of star psf
-_SATURATION_LEVEL = 3  # sigma? above background
-_SATURATION_THRESHOLD = 3  # maximum allowed pixels above saturation level
+_BUFFER1 = 2.5  # aperture of asteroid is this * the fwhm.
+_BUFFER2 = 40.  # the size of the cutout of the asteroid before rotation.
 
-_OUTPUT_NO_MKPSF = '{}/no_image_psf.txt'.format(_PSF_DIR)
+_OUTPUT_NO_MKPSF = '{}/psf_output/no_image_psf.txt'.format(_DIR_PATH_BASE)
 
-client = vos.Client()
+'''
+headers in {}_all_output:
+object expnum p_x p_y x y x_mid y_mid x-xmid y-ymid a b a2 b2 pf f f2 consist_f consist_mag
+'''
 
 
 def main():
@@ -69,25 +66,23 @@ def main():
 
     # detect_mbc(args.family, args.object, args.expnum)
 
-    table = pd.read_table('{}/434/434_output_test.txt'.format(_PHOT_DIR), sep=' ', dtype={'object': object})
+    table = pd.read_table('{}/434/434_all_output_test.txt'.format(_PHOT_DIR), sep=' ', dtype={'object': object},
+                          index_col=False)
 
-    for i in range(5, 6):  # len(input)):
-
+    for i in range(0, 1):  # len(input)):
         detect_mbc('434', table['object'][i], table['expnum'][i], i)
         print '\n'
 
 
 def detect_mbc(family_name, object_name, expnum, i):
     """
-    Compare psf of asteroid with mean of stars to detect possible comae
+    Compare psf of asteroid with mean of stars to detect possible activity
     """
 
     # read in asteroid identification values from the photometry output
-    phot_output_file = '{}/{}/{}_output_test.txt'.format(_PHOT_DIR, family_name, family_name)
-    phot_output_table = pd.read_table(phot_output_file, sep=' ', dtype={'object': object})
+    phot_output_file = '{}/{}/{}_all_output_test.txt'.format(_PHOT_DIR, family_name, family_name)
+    phot_output_table = pd.read_table(phot_output_file, sep=' ', dtype={'object': object}, index_col=False)
     asteroid_id = phot_output_table.query('object == "{}" & expnum == "{}"'.format(object_name, expnum))
-
-    print 'buffers: ', _BUFFER1, _BUFFER2
     print asteroid_id
 
     # read in postage stamp header and data, do photometry to measure background (needed for saturation check)
@@ -153,7 +148,7 @@ def fits_data(object_name, expnum, family_name):
                     data = hdulist[0].data
                     header = hdulist[0].header
 
-                os.unlink(file_path)
+                # os.unlink(file_path)
                 return header, data, fits_file
 
 
@@ -180,13 +175,13 @@ def get_star_data(expnum, header, object_data, fits_file, exp_data):
     iraf.digiphot(_doprint=0)
     iraf.apphot(_doprint=0)
     iraf.daophot(_doprint=0)
-    iraf.seepsf(local_file_path, local_psf, xpsf=x, ypsf=y)
+    iraf.seepsf(local_file_path, local_psf, xpsf=x, ypsf=y, magnitude=object_data['mag'].values)
 
     with fits.open(local_psf) as hdulist:
         data = hdulist[0].data
 
     os.unlink(local_file_path)
-    os.unlink(local_psf)
+    # os.unlink(local_psf)
 
     th = math.degrees(object_data['theta'].values)
     data_rot = rotate(data, th)
@@ -214,7 +209,7 @@ def get_asteroid_data(object_data, data, i, fwhm):
 
     # make sure there's only one object, otherwise pd.DataFrame.values won't work
     assert len(object_data) == 1
-
+    '''
     # define parameters of the square to cut out from the polygon around the elongated object
     a = object_data['a'].values[0]
     b = object_data['b'].values[0]
@@ -234,6 +229,14 @@ def get_asteroid_data(object_data, data, i, fwhm):
 
     data_obj = np.ones((len(range(int(y_min), int(y_max))), len(range(int(x_min), int(x_max)))))
     np.copyto(data_obj, data[y_min:y_max, x_min:x_max])
+    '''
+    th = object_data['theta'].values
+    data_obj = data[(object_data['ymin'].values - _BUFFER2):(object_data['ymax'].values + _BUFFER2),
+                    (object_data['xmin'].values - _BUFFER2):(object_data['xmax'].values + _BUFFER2)]
+
+    hdu = fits.PrimaryHDU()
+    hdu.data = data_obj
+    hdu.writeto('cutout_{}.fits'.format(i), clobber=True)
 
     # rotate the data about the angle of elongation, semi major axis is along x as reading out rows (not columns)
     data_rot = pd.DataFrame(data=rotate(data_obj, math.degrees(th)))
