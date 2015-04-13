@@ -3,6 +3,7 @@ execfile(activate_this, dict(__file__=activate_this))
 import os
 import sep
 import vos
+import getpass
 import numpy as np
 from astropy.io import fits
 from astropy.table import vstack
@@ -12,7 +13,6 @@ from scipy.spatial import cKDTree
 import math
 import pandas as pd
 from astropy.coordinates import SkyCoord
-
 import sys
 
 sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/ossos')
@@ -106,6 +106,11 @@ def find_objects_by_phot(family_name, object_name, ap, th, filter_type='r', imag
 
     # Retrieve the predicted coordinates of the object
     if os.path.exists(image_list_path):
+        image_table = pd.read_table(image_list_path, sep='\t', dtype={'Object': object})
+        object_list = image_table['Object'].values
+        expnum_list = image_table['Image'].values
+
+        '''
         expnum_list = []
         image_list = []
         with open(image_list_path) as infile:
@@ -115,38 +120,30 @@ def find_objects_by_phot(family_name, object_name, ap, th, filter_type='r', imag
                 if len(item.split()) > 0:
                     image_list.append(item.split()[0])
                     expnum_list.append(item.split()[1])
+        '''
     else:
-        image_list, expnum_list, ra_list, dec_list = get_image_info(family_name, filter_type, image_type)
+        object_list, expnum_list, ra_list, dec_list = get_image_info(family_name, filter_type, image_type)
 
     tkbad_list = []
     with open('catalogue/tkBAD.txt') as infile:
         for line in infile:
             tkbad_list.append(line.split(' ')[0])
 
-    if expnum in tkbad_list:
-        print '-- Bad exposure'
-    else:
-        # If object name is not specified, iterate through all objects in the family
-        if object_name is None:
-            out_filename = '{}_phot.txt'.format(family_name)
-            with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename), 'a') as outfile:
-                outfile.write("{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n".format(
-                    'object', 'expnum', 'ra', 'dec', 'flux', 'mag', 'x', 'y', 'time', 'consistent_f',
-                    'consistent_mag', 'diff_ra', 'diff_dec', 'a', 'b', 'theta'))
-
-            for index, image_object in enumerate(image_list):
-                print 'Finding asteroid {} in family {} '.format(object_name, family_name)
+    # If object name is not specified, iterate through all objects in the family
+    if object_name is None:
+        for index, image_object in enumerate(object_list):
+            if expnum_list[index] in tkbad_list:
+                print '-- Bad exposure'
+            else:
+                print 'Finding asteroid {} in family {} '.format(image_object, family_name)
                 iterate_thru_images(family_name, image_object, expnum_list[index], username, password, ap, th)
-        else:
-            out_filename = '{}_{}_phot.txt'.format(family_name, object_name)
-            with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename, 'a')) as outfile:
-                outfile.write("{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n".format(
-                    'object', 'expnum', 'ra', 'dec', 'flux', 'mag', 'x', 'y', 'time', 'consistent_f',
-                    'consistent_mag', 'diff_ra', 'diff_dec', 'a', 'b', 'theta'))
-
-            for index, image_object in enumerate(image_list):
-                if object_name == image_object:
-                    print 'Finding asteroid {} in family {} '.format(object_name, family_name)
+    else:
+        for index, image_object in enumerate(object_list):
+            if object_name == image_object:
+                if expnum_list[index] in tkbad_list:
+                    print '-- Bad exposure'
+                else:
+                    print 'Finding asteroid {} in family {} '.format(image_object, family_name)
                     iterate_thru_images(family_name, object_name, expnum_list[index], username, password, ap, th)
 
 
@@ -680,13 +677,14 @@ def write_all_to_file(object_name, expnum_p, object_data, p_x, p_y, p_f, p_mag, 
     if object_data is not None:
         with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename), 'a') as outfile:
             for i in range(0, len(object_data)):
-                outfile.write('{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n'.format(
+                outfile.write('{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n'.format(
                     object_name, expnum_p, p_x, p_y, object_data['x'][i], object_data['y'][i],
                     object_data['x_mid'][i], object_data['y_mid'][i],
+                    object_data['xmin'][i], object_data['xmax'][i], object_data['ymin'][i], object_data['ymax'][i],
                     object_data['x'][i] - object_data['x_mid'][i], object_data['y'][i] - object_data['y_mid'][i],
-                    object_data['a'][i], object_data['b'][i], object_data['a2'][i], object_data['b2'][i],
+                    object_data['a'][i], object_data['b'][i], object_data['a2'][i], object_data['b2'][i], object_data['theta'][i],
                     p_f, object_data['f'][i], object_data['f2'][i],
-                    p_mag, object_data['mag'],
+                    p_mag, object_data['mag'][i],
                     object_data['consistent_f'][i], object_data['consistent_mag'][i]))
 
     else:
