@@ -83,8 +83,8 @@ def do_all_things(familyname, filtertype, imagetype, radius, aperture, thresh):
         vos_dir = '{}/all'.format(_VOS_DIR)
 
     assert storage.exists(vos_dir)
-    image_list_path = '{}/{}_images_test.txt'.format(_IMAGE_LISTS, familyname)  # USING TEST FILE
-    print "WARNING: USING A TEST FILE ***************************************************************"
+    image_list_path = '{}/{}_images.txt'.format(_IMAGE_LISTS, familyname)  # USING TEST FILE
+    # print "WARNING: USING A TEST FILE ***************************************************************"
 
     '''
     # initiate output file
@@ -117,7 +117,7 @@ def do_all_things(familyname, filtertype, imagetype, radius, aperture, thresh):
                                   names=['Object', 'Image', 'RA', 'DEC'],
                                   sep='\t', dtype={'Object': object, 'Image': object})
 
-        for row in range(0, 50):  # len(table)):
+        for row in range(len(table)):
             print '\n{} --- Searching for {} in exposure {} -----'.format(row, table['Object'][row],
                                                                           table['Image'][row])
             expnum = (table['Image'][row]).strip('{}'.format(imagetype))
