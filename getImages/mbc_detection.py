@@ -19,6 +19,7 @@ from scipy.stats import chisquare
 from shapely.geometry import Polygon
 import sys
 
+pd.set_option('display.max_columns', 500)
 client = vos.Client()
 sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/ossos')
 from ossos import storage
@@ -35,9 +36,11 @@ _ZMAG = 'PHOTZP'
 _TARGET = 'OBJECT'
 
 _BUFFER1 = 2.5  # aperture of asteroid is this * the fwhm.
-_BUFFER2 = 40.  # the size of the cutout of the asteroid before rotation.
+_BUFFER2 = 30.  # the size of the cutout of the asteroid before rotation.
 
 _OUTPUT_NO_MKPSF = '{}/psf_output/no_image_psf.txt'.format(_DIR_PATH_BASE)
+_INPUT_FILE = 'all_output_test.txt'
+_OUTPUT_DETECTION = 'above_3_sig.txt'
 
 '''
 headers in {}_all_output:
@@ -55,7 +58,7 @@ def main():
                         help="Asteroid family name. Usually the asteroid number of the largest member.")
     parser.add_argument("--object", '-o',
                         action='store',
-                        default='25076',
+                        default=None,
                         help='The object to be identified.')
     parser.add_argument("--expnum", '-x',
                         action='store',
@@ -66,10 +69,11 @@ def main():
 
     # detect_mbc(args.family, args.object, args.expnum)
 
-    table = pd.read_table('{}/434/434_all_output_test.txt'.format(_PHOT_DIR), sep=' ', dtype={'object': object},
+    table = pd.read_table('{}/{}/{}_{}'.format(_PHOT_DIR, args.family, args.family, _INPUT_FILE), sep=' ',
+                          dtype={'object': object},
                           index_col=False)
 
-    for i in range(0, 1):  # len(input)):
+    for i in range(6, len(table)):
         detect_mbc('434', table['object'][i], table['expnum'][i], i)
         print '\n'
 
@@ -80,10 +84,13 @@ def detect_mbc(family_name, object_name, expnum, i):
     """
 
     # read in asteroid identification values from the photometry output
-    phot_output_file = '{}/{}/{}_all_output_test.txt'.format(_PHOT_DIR, family_name, family_name)
+    phot_output_file = '{}/{}/{}_{}'.format(_PHOT_DIR, family_name, family_name, _INPUT_FILE)
     phot_output_table = pd.read_table(phot_output_file, sep=' ', dtype={'object': object}, index_col=False)
     asteroid_id = phot_output_table.query('object == "{}" & expnum == "{}"'.format(object_name, expnum))
     print asteroid_id
+    if not len(asteroid_id) == 1:
+        print 'Multiple object identified'
+        return
 
     # read in postage stamp header and data, do photometry to measure background (needed for saturation check)
     header, data, fits_file = fits_data(object_name, expnum, family_name)
@@ -109,7 +116,7 @@ def detect_mbc(family_name, object_name, expnum, i):
     '''
 
     # reject any object too bright that will definetly be saturated
-    mag = asteroid_id['mag'].values
+    mag = asteroid_id['mag'].values[0]
     if mag < 18.5:
         print '>> Object is too bright for accurate photometry'
         return
@@ -121,7 +128,9 @@ def detect_mbc(family_name, object_name, expnum, i):
     star_data = get_star_data(expnum, header, asteroid_id, fits_file, data)
 
     print '-- Comparing PSFs'
-    compare_psf(star_data, ast_data, fwhm)
+    detection = compare_psf(star_data, ast_data, fwhm)
+    if detection:
+        write_to_file(asteroid_id, family_name)
 
 
 def fits_data(object_name, expnum, family_name):
@@ -148,7 +157,7 @@ def fits_data(object_name, expnum, family_name):
                     data = hdulist[0].data
                     header = hdulist[0].header
 
-                # os.unlink(file_path)
+                os.unlink(file_path)
                 return header, data, fits_file
 
 
@@ -169,7 +178,9 @@ def get_star_data(expnum, header, object_data, fits_file, exp_data):
     stamp_uri = '{}/all/{}'.format(_VOS_DIR, fits_file)
     header = storage.get_header(stamp_uri)
     pvwcs = wcs.WCS(header)
-    x, y = pvwcs.sky2xy(object_data['ra'].values, object_data['dec'].values)
+    # x, y = pvwcs.sky2xy(object_data['ra'].values, object_data['dec'].values)
+    x = object_data['x_mid'].values
+    y = object_data['y_mid'].values
 
     iraf.set(uparm="./")
     iraf.digiphot(_doprint=0)
@@ -181,7 +192,7 @@ def get_star_data(expnum, header, object_data, fits_file, exp_data):
         data = hdulist[0].data
 
     os.unlink(local_file_path)
-    # os.unlink(local_psf)
+    os.unlink(local_psf)
 
     th = math.degrees(object_data['theta'].values)
     data_rot = rotate(data, th)
@@ -209,59 +220,48 @@ def get_asteroid_data(object_data, data, i, fwhm):
 
     # make sure there's only one object, otherwise pd.DataFrame.values won't work
     assert len(object_data) == 1
-    '''
+
     # define parameters of the square to cut out from the polygon around the elongated object
-    a = object_data['a'].values[0]
-    b = object_data['b'].values[0]
-    th = object_data['theta'].values
-    cx = object_data['x'].values
-    cy = object_data['y'].values
-    a_x = a * math.cos(th)
-    a_y = a * math.sin(th)
-    b_x = b * math.sin(th)
-    b_y = b * math.cos(th)
-    p1 = (cx + b_x - a_x, cy - a_y + b_y)
-    p2 = (cx + a_x + b_x, cy + a_y + b_y)
-    p3 = (cx + a_x - b_x, cy + a_y - b_y)
-    p4 = (cx - a_x - b_x, cy - a_y - b_y)
-    polygon = Polygon([p1, p2, p3, p4]).buffer(_BUFFER2)
-    x_min, y_min, x_max, y_max = polygon.bounds
+    x_min = int(object_data['xmin'].values[0] - _BUFFER2)
+    x_max = int(object_data['xmax'].values[0] + _BUFFER2)
+    y_min = int(object_data['ymin'].values[0] - _BUFFER2)
+    y_max = int(object_data['ymax'].values[0] + _BUFFER2)
 
-    data_obj = np.ones((len(range(int(y_min), int(y_max))), len(range(int(x_min), int(x_max)))))
+    # ensure that you are selecting data that is on the CCD
+    data_y_max, data_x_max = data.shape
+    if x_min < 0:
+        x_min = 0
+    if y_min < 0:
+        y_min = 0
+    if x_max > data_x_max:
+        x_max = data_x_max
+    if y_max > data_y_max:
+        y_max = data_y_max
+
+    data_obj = np.ones((len(range(y_min, y_max)), len(range(x_min, x_max))))
     np.copyto(data_obj, data[y_min:y_max, x_min:x_max])
-    '''
-    th = object_data['theta'].values
-    data_obj = data[(object_data['ymin'].values - _BUFFER2):(object_data['ymax'].values + _BUFFER2),
-                    (object_data['xmin'].values - _BUFFER2):(object_data['xmax'].values + _BUFFER2)]
-
-    hdu = fits.PrimaryHDU()
-    hdu.data = data_obj
-    hdu.writeto('cutout_{}.fits'.format(i), clobber=True)
 
     # rotate the data about the angle of elongation, semi major axis is along x as reading out rows (not columns)
-    data_rot = pd.DataFrame(data=rotate(data_obj, math.degrees(th)))
-
-    # subtract background
-    # data_rot = get_bkg(data_rot)
-
-    rows, cols = data_rot.shape
-    cx2 = int(cols / 2)
-    cy2 = int(rows / 2)
-
-    ell_buffer = _BUFFER1 * fwhm
-    print 'buffer, fwhm: ', ell_buffer, fwhm
+    assert (math.degrees(object_data['theta'].values[0]) > -90) and (math.degrees(object_data['theta'].values[0]) < 90)
+    data_rot = rotate(data_obj, math.degrees(object_data['theta'].values[0]))
 
     # cut out a circular aperture around the object
+    a = 0.5 * math.sqrt((object_data['xmax'].values[0] - object_data['xmin'].values[0]) ** 2 +
+                        (object_data['ymax'].values[0] - object_data['ymin'].values[0]) ** 2)
+    ell_buffer = _BUFFER1 * fwhm
+    cy, cx = np.divide(data_rot.shape, 2)
+
     mask = np.ones(data_rot.shape, dtype=bool)
-    x_range = range(cx2 - int(a + ell_buffer), cx2 + int(a + ell_buffer))
+    mask2 = np.zeros(data_rot.shape)
+    x_range = range(int(cx - a - ell_buffer + 1), int(cx + a + ell_buffer - 1))
     for x in x_range:
-        y1 = int(cy2 - ((a + ell_buffer) ** 2 - (x - cx2) ** 2) ** 0.5)
-        y2 = int(cy2 + ((a + ell_buffer) ** 2 - (x - cx2) ** 2) ** 0.5)
+        y1 = int(cy - math.sqrt((a + ell_buffer) ** 2 - (x - cx) ** 2))
+        y2 = int(cy + math.sqrt((a + ell_buffer) ** 2 - (x - cx) ** 2))
         for y in range(y1, y2):
             mask[y][x] = False
+            mask2[y][x] = 1
 
     data_cutout = np.ma.array(data_rot, mask=mask)
-
     '''
     # instead of ellipse, try cutting out rectangle
     x_min2 = cx2 - (a + ell_buffer)
@@ -270,11 +270,10 @@ def get_asteroid_data(object_data, data, i, fwhm):
     y_max2 = cy2 + (a + ell_buffer)
     data_cutout = (data_rot.values)[y_min2:y_max2, x_min2:x_max2]
     '''
-    '''
     hdu = fits.PrimaryHDU()
-    hdu.data = np.ma.fix_invalid(data_cutout, fill_value=0)
+    hdu.data = np.multiply(data_rot, mask2)
     hdu.writeto('cutout_{}.fits'.format(i), clobber=True)
-    '''
+
     data_mean = np.ma.mean(data_cutout, axis=1)
 
     # take the mean of all the values in each ROW
@@ -319,7 +318,14 @@ def compare_psf(data_str, data_ast, fwhm):
     # fit a gaussian to the asteroid psf and then the star psf
     fitp_ast, fitco_ast = curve_fit(gauss, x_ast, data_ast, p_ast)
     fitp_str, fitco_str = curve_fit(gauss, x_str, data_str, p_str)
-
+    gauss_ast = fitp_ast[0] * np.exp(-(x_ast - fitp_ast[1]) ** 2 / (2. * fitp_ast[2] ** 2)) + fitp_ast[3]
+    '''
+    with sns.axes_style('ticks'):
+        plt.plot(x_ast, data_ast, label='Ast PSF', ls='--')
+        plt.plot(x_ast, gauss_ast, label='Gaussian fit', ls=':')
+        plt.legend()
+        plt.show()
+    '''
     # shift the center of the star psf to the center of the asteroid psf
     gauss_shift = fitp_str[1] - fitp_ast[1]
     x_str_shift = np.subtract(x_str, gauss_shift)
@@ -333,40 +339,53 @@ def compare_psf(data_str, data_ast, fwhm):
     data_ast_sig = np.absolute(np.array(data_ast)) ** 0.5
     r = np.divide(data_ast, data_str_at_astpts)
     r_sig = r * (np.divide(data_ast_sig, data_ast) + np.divide(data_str_sig, data_str_at_astpts))
-    r_sig2 = r * np.sqrt(np.square(np.divide(data_ast_sig, data_ast)) +
-                         np.square(np.divide(data_str_sig, data_str_at_astpts)))
+    r_sig2 = r * np.sqrt(
+        np.square(np.divide(data_ast_sig, data_ast)) + np.square(np.divide(data_str_sig, data_str_at_astpts)))
+
     print r.compressed()
-    print np.ma.mean(r)
-    print np.ma.mean(np.sort(r)[2:-3])
-    print np.ma.median(r)
+    print np.ma.mean(r), np.ma.mean(np.sort(r)[2:-3])
     print '>> (r - r_mean) / r_sig'
-    print (abs(r) - np.ma.mean(r)) / r_sig
-    print np.ma.mean((abs(r) - np.ma.mean(r)) / r_sig)
-    print (abs(r) - np.ma.mean(np.sort(r)[2:-3])) / r_sig
-    print np.ma.mean((abs(r) - np.ma.mean(np.sort(r)[2:-3])) / r_sig)
+    ratio = (abs(r) - np.ma.mean(np.sort(r)[2:-3])) / r_sig2
+    print ratio
+    print np.ma.mean(ratio)
 
     # normalize the star PSF to the height of the asteroid PSF
-
     ast_baseline = np.mean(np.sort(data_ast)[:8])
     str_baseline = np.mean(np.sort(data_str)[:8])
     data_str_norm = np.multiply(data_str_at_astpts,
                                 np.amax(data_ast - ast_baseline) / np.amax(data_str_at_astpts - str_baseline))
     data_str_like_ast = data_str_norm + ast_baseline - np.mean(np.sort(data_str_norm)[:8])
 
-    slope, intercept, r_value, p_value, std_err = linregress(data_ast, data_str_at_astpts)
-    data_str_normed = slope * data_str_at_astpts + intercept
-
+    # slope, intercept, r_value, p_value, std_err = linregress(data_ast, data_str_at_astpts)
+    # data_str_normed = slope * data_str_at_astpts + intercept
+    '''
     with sns.axes_style('ticks'):
         plt.plot(x_ast, data_ast, label='Ast PSF', ls='--')
         plt.plot(x_str_shift, data_str, label='Star PSF', ls=':')
         plt.legend()
         plt.show()
-
+    '''
     with sns.axes_style('ticks'):
         plt.plot(x_ast, data_ast, label='Ast PSF', ls='--')
         plt.plot(x_ast, data_str_like_ast, label='Interp star PSF', ls='-.')
         plt.legend()
         plt.show()
+
+    off_mean_pts = []
+    for i in ratio:
+        if abs(i) > 3:
+            off_mean_pts.append(i)
+    if len(off_mean_pts) > 1:
+        print '>> Detect possible comae <<'
+        return True
+    else:
+        print '>> No detection'
+        return False
+
+
+def write_to_file(asteroid_id, family_name):
+    with open('{}/{}/{}'.format(_PHOT_DIR, family_name, _OUTPUT_DETECTION), 'a') as outfile:
+        outfile.write('{} {}'.format(asteroid_id['object'].values[0], asteroid_id['expnum'].values[0]))
 
 
 if __name__ == '__main__':
