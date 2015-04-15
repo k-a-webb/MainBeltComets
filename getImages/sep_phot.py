@@ -12,6 +12,8 @@ import argparse
 from scipy.spatial import cKDTree
 import math
 import pandas as pd
+
+pd.set_option('display.max_columns', 500)
 from astropy.coordinates import SkyCoord
 import sys
 
@@ -32,6 +34,14 @@ _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
 _STAMPS_DIR = '{}/postage_stamps'.format(_DIR_PATH_BASE)
 _IMAGE_LISTS = '{}/image_lists'.format(_DIR_PATH_BASE)
 _OUTPUT_DIR = '{}/phot_output'.format(_DIR_PATH_BASE)
+
+_OUTPUT_MULT_ID = 'multiple_iden.txt'
+_OUTPUT_NO_COND_MET = 'no_cond_met.txt'
+_OUPUT_PHOT_ERR = "phot_param_err.txt"
+_OUTPUT_INVOLVED = 'involved.txt'
+_OUTPUT_NOT_FOUND = 'no_object_found.txt'
+_OUTPUT_ALL = 'output.txt'
+_OUTPUT_ERROR = 'unknown_error.txt'
 
 _RADIUS = 0.01  # default radius of cutout
 _ERR_ELL_RAD = 15  # default radius of the error ellipse
@@ -110,17 +120,6 @@ def find_objects_by_phot(family_name, object_name, ap, th, filter_type='r', imag
         object_list = image_table['Object'].values
         expnum_list = image_table['Image'].values
 
-        '''
-        expnum_list = []
-        image_list = []
-        with open(image_list_path) as infile:
-            filestr = infile.read()
-            fileline = filestr.split('\n')
-            for item in fileline[1:]:
-                if len(item.split()) > 0:
-                    image_list.append(item.split()[0])
-                    expnum_list.append(item.split()[1])
-        '''
     else:
         object_list, expnum_list, ra_list, dec_list = get_image_info(family_name, filter_type, image_type)
 
@@ -163,35 +162,37 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
         table = append_table(septable, pvwcs, zeropt, p_ra, p_dec)
         transients, catalogue, catalog_stars = compare_to_catalogue(table)
 
-        good_neighbours, r_err = iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
-                                                      expnum_p, mag_list_jpl, ra_dot, dec_dot, exptime, family_name)
-        if good_neighbours is None:
+        good_neighbours, r_err, p_f, p_mag = iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
+                                                                  expnum_p, mag_list_jpl, ra_dot, dec_dot, exptime,
+                                                                  family_name)
+
+        if (len(good_neighbours) != 1) or (len(good_neighbours) is None):
             return True
 
-        if len(good_neighbours) == 1:
-            involved = check_involvement(good_neighbours, catalogue, r_err, pvwcs, size_x, size_y)
-            if involved:
-                write_to_error_file2(object_name, expnum_p, out_filename='involved.txt', family_name=family_name)
-                return True
-            else:
-                write_to_file(object_name, expnum_p, good_neighbours, header,
-                              out_filename='{}_output.txt'.format(family_name), family_name=family_name)
-                print '-- Cutting out recentered postage stamp'
-                # cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, _RADIUS, username, password)
-                return good_neighbours
-
-        else:
-            print '  More than one object identified <<<'
+        involved = check_involvement(good_neighbours, catalogue, r_err, pvwcs, size_x, size_y)
+        if involved:
+            write_to_error_file(object_name, expnum_p, _OUTPUT_INVOLVED, family_name)
             return True
+
+        assert good_neighbours['theta'].values[0] > - np.pi / 2
+        assert good_neighbours['theta'].values[0] < np.pi / 2
+        write_to_file(family_name, object_name, expnum_p, good_neighbours, header, p_ra, p_dec, p_f, p_mag,
+                      '{}_{}'.format(family_name, _OUTPUT_ALL))
+        print '-- Cutting out recentered postage stamp'
+        # cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, _RADIUS, username, password)
+        return good_neighbours
 
     except Exception, e:
         print 'ERROR: {}'.format(e)
         if 'NoneType' in e.message:
             return False
         else:
+            write_to_error_file(object_name, expnum_p, _OUTPUT_ERROR, family_name)
             return True
-    except AssertionError:
+    except AssertionError, e:
+        print e
         print 'Error in JPL query, no ephem start'
+        write_to_error_file(object_name, expnum_p, _OUTPUT_ERROR, family_name)
         return True
 
 
@@ -231,7 +232,7 @@ def get_fits_data(object_name, expnum_p, family_name, ap, th):
         raise
     except Exception, e:
         print 'ERROR: {}'.format(e)
-        write_to_error_file2(object_name, expnum_p, out_filename="phot_param_err.txt", family_name=family_name)
+        write_to_error_file(object_name, expnum_p, out_filename=_OUTPIT_PHOT_ERR, family_name=family_name)
         raise
 
 
@@ -397,9 +398,6 @@ def append_table(objs, pvwcs, zeropt, p_ra, p_dec):
     f_list = []
     diff_ra = []
     diff_dec = []
-    a2_list = []
-    b2_list = []
-    f_list2 = []
     x_mid = []
     y_mid = []
 
@@ -408,13 +406,7 @@ def append_table(objs, pvwcs, zeropt, p_ra, p_dec):
         ra_list.append(ra)
         dec_list.append(dec)
         mag_sep_list.append(-2.5 * math.log10(table['flux'][row]) + zeropt)
-        a2 = 0.25 * math.sqrt(abs((table['xmax'][row] - table['xmin'][row]) ** 2 +
-                                  (table['ymax'][row] - table['ymin'][row]) ** 2))
-        b2 = math.sqrt(table['x2'][row] + table['y2'][row])
-        a2_list.append(a2)
-        b2_list.append(b2)
-        f_list.append((table['a'][row] ** 2 - table['b'][row] ** 2) ** 0.5)
-        f_list2.append(math.sqrt(abs(a2 ** 2 - b2 ** 2)))
+        f_list.append(math.sqrt(table['a'][row] ** 2 - table['b'][row] ** 2))
         diff_ra.append((p_ra - ra) * 3600)
         diff_dec.append((p_dec - dec) * 3600)
         x_mid.append(0.5 * (table['xmax'][row] - table['xmin'][row]) + table['xmin'][row])
@@ -426,9 +418,6 @@ def append_table(objs, pvwcs, zeropt, p_ra, p_dec):
     table['f'] = f_list
     table['diff_ra'] = diff_ra
     table['diff_dec'] = diff_dec
-    table['a2'] = a2_list
-    table['b2'] = b2_list
-    table['f2'] = f_list2
     table['y_mid'] = y_mid
     table['x_mid'] = x_mid
     return table
@@ -478,6 +467,9 @@ def compare_to_catalogue(sep_table):
 
 
 def find_neighbours(transients, r_sig, p_x, p_y):
+    """
+    Parse through sep output to find objects within a radius r_sig of the predicted location of the asteroid
+    """
     found = True
 
     i_list = neighbour_search(transients, r_sig, p_x, p_y)
@@ -527,8 +519,6 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
         magrange = maxmag - minmag
 
     # calculate theoretical focal length
-    # print '>> Error allowance is set to {} percent'.format(_F_ERR)
-    # print '>> RA_dot: {:.2f}, DEC_dot: {:.2f}, exptime: {:.1f}'.format(ra_dot, dec_dot, exptime)
     f_pix = 0.5 * ((ra_dot / 2) ** 2 + (dec_dot / 2) ** 2) ** 0.5 * (exptime / (3600 * 0.184))
     f_pix_err = (_F_ERR / 100) * 0.5 * (abs(ra_dot) + abs(dec_dot)) * (exptime / (3600 * 0.184))
     assert f_pix_err != 0
@@ -539,18 +529,18 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
     print '  Theoretical focal length: {:.2f} +/- {:.2f}'.format(f_pix, f_pix_err)
     print '  Theoretical magnitude: {:.2f} +/- {:.2f}'.format(mean, magrange)
 
+    # parse SEP output for transients in radius r_sig from predicted location of the asteroid
     print '-- Identifying object from nearest neighbours within {} pixels'.format(r_sig)
     i_list, found = find_neighbours(transients, r_sig, p_x, p_y)
     if not found:
-        with open('{}/{}/no_object_found.txt'.format(_OUTPUT_DIR, family_name), 'a') as infile:
-            infile.write('{}\t{}\t{}\t{}\t{}\n'.format(object_name, expnum, p_ra, p_dec, f_pix))
+        with open('{}/{}/_OUTPUT_NOT_FOUND'.format(_OUTPUT_DIR, family_name), 'a') as infile:
+            infile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(object_name, expnum, p_ra, p_dec, p_x, p_y, f_pix))
         raise Exception
 
+    # build a table of the candidate transients, check if meet elongation and magnitude conditions
     i_table = transients.iloc[i_list, :]  # row, column
-
-    both_cond = i_table.query('({} < f2 < {}) & ({} < mag < {})'.format(f_pix - f_pix_err, f_pix + f_pix_err,
-                                                                        mean - magrange, mean + magrange))
-
+    both_cond = i_table.query('({} < f < {}) & ({} < mag < {})'.format(f_pix - f_pix_err, f_pix + f_pix_err,
+                                                                       mean - magrange, mean + magrange))
     only_f_cond = i_table.query('{} < f < {}'.format(f_pix - f_pix_err, f_pix + f_pix_err))
     only_mag_cond = i_table.query('{} < mag < {}'.format(mean - magrange, mean + magrange))
 
@@ -558,36 +548,28 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
         print '>> Both conditions met by:'
         both_cond2 = add_to_object_table(both_cond, 'yes', 'yes')
         print both_cond2
-        write_all_to_file(object_name, expnum, both_cond2, p_x, p_y, f_pix, mean,
-                          out_filename='{}_all_output.txt'.format(family_name), family_name=family_name)
-        if len(both_cond) > 1:
-            print '>> More than one object identified, writing to file <<'
-            write_to_error_file(object_name, expnum, both_cond, out_filename='multiple_iden.txt',
-                                family_name=family_name)
-        return both_cond2, f_pix_err
+        if len(both_cond2) > 1:
+            write_multp_id(object_name, expnum, both_cond2, family_name, p_f)
+        return both_cond2, f_pix_err, f_pix, mean
     elif len(only_f_cond) > 0:
         print '>> Elongation is consistent, magnitude is not:'
         only_f_cond2 = add_to_object_table(only_f_cond, 'yes', 'no')
         print only_f_cond2
-        if len(only_f_cond) > 1:
-            print '>> More than one object identified, writing to file <<'
-            write_to_error_file(object_name, expnum, only_f_cond2, out_filename='multiple_iden.txt',
-                                family_name=family_name)
-        return only_f_cond2, f_pix_err
+        if len(only_f_cond2) > 1:
+            write_multp_id(object_name, expnum, only_f_cond2, family_name, p_f)
+        return only_f_cond2, f_pix_err, f_pix, mean
     elif len(only_mag_cond) > 0:
         print '>> Magnitude is consistent, elongation is not:'
         only_mag_cond2 = add_to_object_table(only_mag_cond, 'no', 'yes')
         print only_mag_cond2
-        if len(only_mag_cond) > 1:
-            print '>> More than one object identified, writing to file <<'
-            write_to_error_file(object_name, expnum, only_mag_cond2, out_filename='multiple_iden.txt',
-                                family_name=family_name)
-        return only_mag_cond2, f_pix_err
+        if len(only_mag_cond2) > 1:
+            write_multp_id(object_name, expnum, only_mag_cond2, family_name, p_f)
+        return only_mag_cond2, f_pix_err, f_pix, mean
     else:
         print "WARNING: No condition could be satisfied <<<<<<<<<<<<<<<<<<<<<<<<<<<<"
         print '  Nearest neighbours:'
         print i_table
-        write_to_error_file(object_name, expnum, i_table, out_filename='no_cond_satif.txt', family_name=family_name)
+        write_no_cond_met(object_name, expnum, i_table, family_name, p_x, p_y, p_ra, p_dec, f_pix, mean)
         return
 
 
@@ -645,7 +627,7 @@ def check_involvement(object_data, catalogue, r_err, pvwcs, size_x, size_y):
         return False
 
 
-def write_to_file(object_name, expnum_p, object_data, header, out_filename, family_name):
+def write_to_file(family_name, object_name, expnum, object_data, header, p_ra, p_dec, p_f, p_mag, out_filename):
     """
     Prints to outfile
     """
@@ -656,59 +638,43 @@ def write_to_file(object_name, expnum_p, object_data, header, out_filename, fami
     time = (end_mjd - start_mjd) / 2
     date_time = '{}-{}'.format(date, time)
 
+    pvwcs = wcs.WCS(header)
+    p_x, p_y = pvwcs.sky2xy(p_ra, p_dec)
+
     if object_data is not None:
         with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename), 'a') as outfile:
             for i in range(0, len(object_data)):
-                outfile.write('{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n'.format(
-                    object_name, expnum_p, object_data['ra'][i], object_data['dec'][i], object_data['flux'][i],
-                    object_data['mag'][i], object_data['x'][i], object_data['y'][i], date_time,
-                    object_data['consistent_f'][i], object_data['consistent_mag'][i], object_data['diff_ra'][i],
-                    object_data['diff_dec'][i], object_data['a'][i], object_data['b'][i], object_data['theta'][i]))
+                outfile.write('{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n'.format(
+                    object_name, expnum, p_ra, p_dec, object_data['ra'][i], object_data['dec'][i],
+                    p_x, p_y, object_data['x'][i], object_data['y'][i], object_data['x_mid'][i], object_data['y_mid'][i],
+                    object_data['xmin'][i], object_data['xmax'][i], object_data['ymin'][i], object_data['ymax'][i],
+                    object_data['a'][i], object_data['b'][i], object_data['theta'][i],
+                    p_f, object_data['f'][i], object_data['consistent_f'][i],
+                    p_mag, object_data['mag'][i], object_data['flux'][i], object_data['consistent_mag'][i], date_time))
 
     else:
         print "WARNING: Could not identify object {} in image".format(object_name, expnum_p)
 
 
-def write_all_to_file(object_name, expnum_p, object_data, p_x, p_y, p_f, p_mag, out_filename, family_name):
-    """
-    Prints to outfile
-    """
-
-    if object_data is not None:
-        with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename), 'a') as outfile:
-            for i in range(0, len(object_data)):
-                outfile.write('{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n'.format(
-                    object_name, expnum_p, p_x, p_y, object_data['x'][i], object_data['y'][i],
-                    object_data['x_mid'][i], object_data['y_mid'][i],
-                    object_data['xmin'][i], object_data['xmax'][i], object_data['ymin'][i], object_data['ymax'][i],
-                    object_data['x'][i] - object_data['x_mid'][i], object_data['y'][i] - object_data['y_mid'][i],
-                    object_data['a'][i], object_data['b'][i], object_data['a2'][i], object_data['b2'][i], object_data['theta'][i],
-                    p_f, object_data['f'][i], object_data['f2'][i],
-                    p_mag, object_data['mag'][i],
-                    object_data['consistent_f'][i], object_data['consistent_mag'][i]))
-
-    else:
-        print "WARNING: Could not print all output"
-
-
-def write_to_error_file(object_name, expnum, object_data, out_filename, family_name):
+def write_no_cond_met(object_name, expnum, object_data, family_name, p_x, p_y, p_ra, p_dec, p_f, p_mag):
     """
     prints a list of nearest neighbours to an outfile for human inspection
     """
     object_data.reset_index(drop=True, inplace=True)
-    with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename), 'a') as outfile:
+    with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_NO_COND_MET), 'a') as outfile:
         try:
+            outfile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\nnearest neighbours:\n'.format(
+                object_name, expnum, p_ra, p_dec, p_x, p_y, p_f, p_mag))
             for i in range(len(object_data)):
-                outfile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
-                    object_name, expnum, object_data['ra'][i], object_data['dec'][i], object_data['flux'][i],
-                    object_data['mag'][i], object_data['x'][i], object_data['y'][i],
-                    object_data['diff_ra'][i], object_data['diff_dec'][i]))
+                outfile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
+                    object_data['ra'][i], object_data['dec'][i], object_data['x'][i], object_data['y'][i],
+                    object_data['f'][i], object_data['mag'][i], object_data['diff_ra'][i], object_data['diff_dec'][i]))
             outfile.write('\n')
         except Exception, e:
             print "ERROR: cannot write to outfile {} <<<<<<<<<<<<".format(e)
 
 
-def write_to_error_file2(object_name, expnum, out_filename, family_name):
+def write_to_error_file(object_name, expnum, out_filename, family_name):
     """
     Write image information to out file
     """
@@ -717,6 +683,24 @@ def write_to_error_file2(object_name, expnum, out_filename, family_name):
         try:
             outfile.write('{}\t{}\n'.format(object_name, expnum))
 
+        except Exception, e:
+            print "ERROR: cannot write to outfile {} <<<<<<<<<<<<".format(e)
+
+
+def write_multp_id(object_name, expnum, object_data, family_name, p_f):
+    """
+    prints a list of nearest neighbours to an outfile for human inspection
+    """
+    print '>> More than one object identified, writing to file <<'
+    object_data.reset_index(drop=True, inplace=True)
+    with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_MULT_ID), 'a') as outfile:
+        try:
+            for i in range(len(object_data)):
+                outfile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
+                    object_name, expnum, object_data['ra'][i], object_data['dec'][i], object_data['x'][i],
+                    object_data['y'][i],
+                    p_f, object_data['f'][i], object_data['flux'][i], object_data['mag'][i]))
+            outfile.write('\n')
         except Exception, e:
             print "ERROR: cannot write to outfile {} <<<<<<<<<<<<".format(e)
 
