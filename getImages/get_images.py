@@ -96,7 +96,7 @@ def get_image_info(familyname, filtertype='r', imagetype='p'):
     expnum_list = []
     ra_list = []
     dec_list = []
-    for object_name in object_list[0:len(object_list) - 1]: # skip header lines
+    for object_name in object_list[0:len(object_list) - 1]:  # skip header lines
         query = Query(object_name, search_start_date=search_start_date, search_end_date=search_end_date)
 
         try:
