@@ -6,14 +6,11 @@ import vos
 import getpass
 import numpy as np
 from astropy.io import fits
-from astropy.table import vstack
 from astropy.time import Time
 import argparse
 from scipy.spatial import cKDTree
 import math
 import pandas as pd
-
-pd.set_option('display.max_columns', 500)
 from astropy.coordinates import SkyCoord
 import sys
 
@@ -21,27 +18,32 @@ sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/ossos')
 from ossos import daophot
 from ossos import storage
 from ossos import wcs
-
 sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/planning')
 from planning.plotting.horizons import batch
 
 from get_images import get_image_info
 import get_stamps
 
+pd.set_option('display.max_columns', 500)
 client = vos.Client()
-_VOS_PATH = 'vos:kawebb/postage_stamps'
+
+_VOS_DIR = 'vos:kawebb/postage_stamps/'
 _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
 _STAMPS_DIR = '{}/postage_stamps'.format(_DIR_PATH_BASE)
 _IMAGE_LISTS = '{}/image_lists'.format(_DIR_PATH_BASE)
 _OUTPUT_DIR = '{}/phot_output'.format(_DIR_PATH_BASE)
 
+_INPUT_FILE = 'images_new.txt'
+
 _OUTPUT_MULT_ID = 'multiple_iden.txt'
 _OUTPUT_NO_COND_MET = 'no_cond_met.txt'
-_OUPUT_PHOT_ERR = "phot_param_err.txt"
+_OUTPUT_PHOT_ERR = "phot_param_err.txt"
+_OUTPUT_PHOT_MEAS_ERR = 'phot_meas_err.txt'
 _OUTPUT_INVOLVED = 'involved.txt'
 _OUTPUT_NOT_FOUND = 'no_object_found.txt'
 _OUTPUT_ALL = 'output.txt'
 _OUTPUT_ERROR = 'unknown_error.txt'
+_OUTPUT_VOS_ERR = 'vos_err.txt'
 
 _RADIUS = 0.01  # default radius of cutout
 _ERR_ELL_RAD = 15  # default radius of the error ellipse
@@ -85,13 +87,7 @@ def main():
     parser.add_argument("--object", '-o',
                         action='store',
                         default=None,
-                        help='The object to be identified.')
-    parser.add_argument("--filter",
-                        action="store",
-                        default='r',
-                        dest="filter",
-                        choices=['r', 'u'],
-                        help="passband, default is r'")
+                        help='The object to be identified.') # Not used currently
     parser.add_argument('--type',
                         default='p',
                         choices=['o', 'p', 's'],
@@ -99,10 +95,10 @@ def main():
 
     args = parser.parse_args()
 
-    find_objects_by_phot(args.family, args.object, float(args.aperture), float(args.thresh), args.filter, args.type)
+    find_objects_by_phot(args.family, float(args.aperture), float(args.thresh), args.type)
 
 
-def find_objects_by_phot(family_name, object_name, ap, th, filter_type='r', image_type='p'):
+def find_objects_by_phot(family_name, aperture, thresh, imagetype):
     """
     For a given family name and object name, preforms photometry and identifies object in the image.
     If only a family name is given, does the same for all objects in that family
@@ -112,38 +108,61 @@ def find_objects_by_phot(family_name, object_name, ap, th, filter_type='r', imag
     username = raw_input("CADC username: ")
     password = getpass.getpass("CADC password: ")
 
-    image_list_path = '{}/{}_images.txt'.format(_IMAGE_LISTS, family_name)
-
-    # Retrieve the predicted coordinates of the object
-    if os.path.exists(image_list_path):
-        image_table = pd.read_table(image_list_path, sep='\t', dtype={'Object': object})
-        object_list = image_table['Object'].values
-        expnum_list = image_table['Image'].values
-
+    # establish input/output
+    if family_name == 'none':
+        vos_dir = '{}/none'.format(_VOS_DIR)
     else:
-        object_list, expnum_list, ra_list, dec_list = get_image_info(family_name, filter_type, image_type)
+        vos_dir = '{}/all'.format(_VOS_DIR)
+    assert storage.exists(vos_dir)
+    image_list_path = '{}/{}_{}'.format(_IMAGE_LISTS, family_name, _INPUT_FILE)  # USING TEST FILE
+    assert os.path.exists(image_list_path)
+
+    # Remove any fits files hanging around from failed run
+    for fits_file in os.listdir(_STAMPS_DIR):
+        if fits_file.endswith('.fits'):
+            storage.remove('{}/{}'.format(_STAMPS_DIR, fits_file))
 
     tkbad_list = []
     with open('catalogue/tkBAD.txt') as infile:
         for line in infile:
             tkbad_list.append(line.split(' ')[0])
 
-    # If object name is not specified, iterate through all objects in the family
-    if object_name is None:
-        for index, image_object in enumerate(object_list):
-            if expnum_list[index] in tkbad_list:
-                print '-- Bad exposure'
+    # for each image of each object, make cutout and go to sep_phot
+    try:
+        table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0,
+                              names=['Object', 'Image', 'RA', 'DEC'],
+                              sep=' ', dtype={'Object': object, 'Image': object})
+    except pd.parser.CParserError:
+        table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0,
+                              names=['Object', 'Image', 'RA', 'DEC'],
+                              sep='\t', dtype={'Object': object, 'Image': object})
+
+    for row in range(57, len(table)):
+        print "\n {} --- Searching for asteroid {} in image {} ".format(row, table['Object'][row], table['Image'][row])
+
+        expnum = (table['Image'][row]).strip('{}'.format(imagetype))
+        if expnum in tkbad_list:
+            print '-- Bad exposure'
+
+        else:
+            postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(table['Object'][row], table['Image'][row],
+                                                                     table['RA'][row], table['DEC'][row])
+            if not storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)):
+                print '-- Cutout not found, creating new cutout'
+                get_stamps.cutout(username, password, family_name, table['Object'][row], table['Image'][row],
+                                  table['RA'][row], table['DEC'][row], _RADIUS)
+            if not storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)):
+                with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_VOS_ERR), 'a') as outfile:
+                    outfile.write('{} {}\n'.format(table['Object'][row], table['Image'][row]))
             else:
-                print 'Finding asteroid {} in family {} '.format(image_object, family_name)
-                iterate_thru_images(family_name, image_object, expnum_list[index], username, password, ap, th)
-    else:
-        for index, image_object in enumerate(object_list):
-            if object_name == image_object:
-                if expnum_list[index] in tkbad_list:
-                    print '-- Bad exposure'
-                else:
-                    print 'Finding asteroid {} in family {} '.format(image_object, family_name)
-                    iterate_thru_images(family_name, object_name, expnum_list[index], username, password, ap, th)
+                success = False
+                attempts = 0
+                while (success is False) and (attempts < 3):
+                    success = iterate_thru_images(family_name, str(table['Object'][row]), table['Image'][row], username,
+                                                  password, aperture, thresh)
+                    attempts += 1
+                    if attempts == 3:
+                        print ' >>>> Last attempt \n'
 
 
 def iterate_thru_images(family_name, object_name, expnum_p, username, password, ap, th):
@@ -151,7 +170,6 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
     For a given family, object, and exposure number, get orbital information of the object in the image
     """
     try:
-        print "-- Performing photometry on image {} ".format(expnum_p)
         septable, header, data = get_fits_data(object_name, expnum_p, family_name, ap, th)
         exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_header_info(header)
 
@@ -174,8 +192,6 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
             write_to_error_file(object_name, expnum_p, _OUTPUT_INVOLVED, family_name)
             return True
 
-        assert good_neighbours['theta'].values[0] > - np.pi / 2
-        assert good_neighbours['theta'].values[0] < np.pi / 2
         write_to_file(family_name, object_name, expnum_p, good_neighbours, header, p_ra, p_dec, p_f, p_mag,
                       '{}_{}'.format(family_name, _OUTPUT_ALL))
         print '-- Cutting out recentered postage stamp'
@@ -187,12 +203,14 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
         if 'NoneType' in e.message:
             return False
         else:
-            write_to_error_file(object_name, expnum_p, _OUTPUT_ERROR, family_name)
+            with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_ERROR), 'a') as outfile:
+                outfile.write('{} {}\n'.format(table['Object'][row], table['Image'][row]))
             return True
     except AssertionError, e:
         print e
         print 'Error in JPL query, no ephem start'
-        write_to_error_file(object_name, expnum_p, _OUTPUT_ERROR, family_name)
+        with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_ERROR), 'a') as outfile:
+            outfile.write('{} {}\n'.format(table['Object'][row], table['Image'][row]))
         return True
 
 
@@ -204,9 +222,9 @@ def get_fits_data(object_name, expnum_p, family_name, ap, th):
 
     try:
         if family_name == 'none':
-            vos_dir = '{}/none'.format(_VOS_PATH)
+            vos_dir = '{}/none'.format(_VOS_DIR)
         else:
-            vos_dir = '{}/all'.format(_VOS_PATH)
+            vos_dir = '{}/all'.format(_VOS_DIR)
 
         assert storage.exists(vos_dir)
         for fits_file in client.listdir(vos_dir):  # images named with convention: object_expnum_RA_DEC.fits
@@ -232,7 +250,7 @@ def get_fits_data(object_name, expnum_p, family_name, ap, th):
         raise
     except Exception, e:
         print 'ERROR: {}'.format(e)
-        write_to_error_file(object_name, expnum_p, out_filename=_OUTPIT_PHOT_ERR, family_name=family_name)
+        write_to_error_file(object_name, expnum_p, out_filename=_OUTPUT_PHOT_ERR, family_name=family_name)
         raise
 
 
@@ -533,12 +551,24 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
     print '-- Identifying object from nearest neighbours within {} pixels'.format(r_sig)
     i_list, found = find_neighbours(transients, r_sig, p_x, p_y)
     if not found:
-        with open('{}/{}/_OUTPUT_NOT_FOUND'.format(_OUTPUT_DIR, family_name), 'a') as infile:
-            infile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(object_name, expnum, p_ra, p_dec, p_x, p_y, f_pix))
+        with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_NOT_FOUND), 'a') as infile:
+            infile.write('{} {} {} {} {} {} {} {}\n'.format(object_name, expnum, p_ra, p_dec, p_x, p_y, f_pix, mean))
         raise Exception
 
     # build a table of the candidate transients, check if meet elongation and magnitude conditions
     i_table = transients.iloc[i_list, :]  # row, column
+
+    # check that SEP phot values make sense
+    for row in i_table:
+        if not (i_table['theta'][row] > - np.pi / 2) and (i_table['theta'][row] < np.pi / 2) and (
+                i_table['a'][row] < 30) and (i_table['b'][row] < 20):
+            with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_PHOT_MEAS_ERR), 'a') as outfile:
+                outfile.write('{} {} {} {} {} {} {} {}\ncandidates:\n{} {} {} {} {} {}'.format(
+                    i_table['object_name'][row], i_table['expnum'][row], p_ra, p_dec, p_x, p_y, f_pix, mean,
+                    i_table['ra'][row], i_table['dec'][row], i_table['x'][row], i_table['y'][row],
+                    i_table['f'][row], i_table['mag'][row]))
+            return
+
     both_cond = i_table.query('({} < f < {}) & ({} < mag < {})'.format(f_pix - f_pix_err, f_pix + f_pix_err,
                                                                        mean - magrange, mean + magrange))
     only_f_cond = i_table.query('{} < f < {}'.format(f_pix - f_pix_err, f_pix + f_pix_err))
@@ -549,21 +579,21 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
         both_cond2 = add_to_object_table(both_cond, 'yes', 'yes')
         print both_cond2
         if len(both_cond2) > 1:
-            write_multp_id(object_name, expnum, both_cond2, family_name, p_f)
+            write_multp_id(object_name, expnum, both_cond2, family_name, p_ra, p_dec, p_x, p_y, f_pix, mean)
         return both_cond2, f_pix_err, f_pix, mean
     elif len(only_f_cond) > 0:
         print '>> Elongation is consistent, magnitude is not:'
         only_f_cond2 = add_to_object_table(only_f_cond, 'yes', 'no')
         print only_f_cond2
         if len(only_f_cond2) > 1:
-            write_multp_id(object_name, expnum, only_f_cond2, family_name, p_f)
+            write_multp_id(object_name, expnum, only_f_cond2, family_name, p_ra, p_dec, p_x, p_y, f_pix, mean)
         return only_f_cond2, f_pix_err, f_pix, mean
     elif len(only_mag_cond) > 0:
         print '>> Magnitude is consistent, elongation is not:'
         only_mag_cond2 = add_to_object_table(only_mag_cond, 'no', 'yes')
         print only_mag_cond2
         if len(only_mag_cond2) > 1:
-            write_multp_id(object_name, expnum, only_mag_cond2, family_name, p_f)
+            write_multp_id(object_name, expnum, only_mag_cond2, family_name, p_ra, p_dec, p_x, p_y, f_pix, mean)
         return only_mag_cond2, f_pix_err, f_pix, mean
     else:
         print "WARNING: No condition could be satisfied <<<<<<<<<<<<<<<<<<<<<<<<<<<<"
@@ -644,13 +674,16 @@ def write_to_file(family_name, object_name, expnum, object_data, header, p_ra, p
     if object_data is not None:
         with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename), 'a') as outfile:
             for i in range(0, len(object_data)):
-                outfile.write('{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n'.format(
-                    object_name, expnum, p_ra, p_dec, object_data['ra'][i], object_data['dec'][i],
-                    p_x, p_y, object_data['x'][i], object_data['y'][i], object_data['x_mid'][i], object_data['y_mid'][i],
-                    object_data['xmin'][i], object_data['xmax'][i], object_data['ymin'][i], object_data['ymax'][i],
-                    object_data['a'][i], object_data['b'][i], object_data['theta'][i],
-                    p_f, object_data['f'][i], object_data['consistent_f'][i],
-                    p_mag, object_data['mag'][i], object_data['flux'][i], object_data['consistent_mag'][i], date_time))
+                outfile.write(
+                    '{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n'.format(
+                        object_name, expnum, p_ra, p_dec, object_data['ra'][i], object_data['dec'][i],
+                        p_x, p_y, object_data['x'][i], object_data['y'][i], object_data['x_mid'][i],
+                        object_data['y_mid'][i],
+                        object_data['xmin'][i], object_data['xmax'][i], object_data['ymin'][i], object_data['ymax'][i],
+                        object_data['a'][i], object_data['b'][i], object_data['theta'][i],
+                        p_f, object_data['f'][i], object_data['consistent_f'][i],
+                        p_mag, object_data['mag'][i], object_data['flux'][i], object_data['consistent_mag'][i],
+                        date_time))
 
     else:
         print "WARNING: Could not identify object {} in image".format(object_name, expnum_p)
@@ -687,7 +720,7 @@ def write_to_error_file(object_name, expnum, out_filename, family_name):
             print "ERROR: cannot write to outfile {} <<<<<<<<<<<<".format(e)
 
 
-def write_multp_id(object_name, expnum, object_data, family_name, p_f):
+def write_multp_id(object_name, expnum, object_data, family_name, p_ra, p_dec, p_x, p_y, p_f, p_mag):
     """
     prints a list of nearest neighbours to an outfile for human inspection
     """
@@ -695,11 +728,13 @@ def write_multp_id(object_name, expnum, object_data, family_name, p_f):
     object_data.reset_index(drop=True, inplace=True)
     with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_MULT_ID), 'a') as outfile:
         try:
+            outfile.write(
+                '{} {} {} {} {} {} {} {}\ncandidates:\n'.format(object_name, expnum, p_ra, p_dec, p_x, p_y, p_f, p_mag))
             for i in range(len(object_data)):
-                outfile.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(
-                    object_name, expnum, object_data['ra'][i], object_data['dec'][i], object_data['x'][i],
-                    object_data['y'][i],
-                    p_f, object_data['f'][i], object_data['flux'][i], object_data['mag'][i]))
+                outfile.write('{} {} {} {} {} {} {} {}\n'.format(
+                    object_data['ra'][i], object_data['dec'][i], object_data['x'][i], object_data['y'][i],
+                    object_data['f'][i], object_data['mag'][i], object_data['consistent_f'][i],
+                    object_data['consistent_mag'][i]))
             outfile.write('\n')
         except Exception, e:
             print "ERROR: cannot write to outfile {} <<<<<<<<<<<<".format(e)
@@ -719,7 +754,6 @@ def add_day(date_range_t):
     Return given date plus one day (or there abouts)
     """
 
-    print "WARNING: only searching for one day"
     time_end_date = (((date_range_t.iso[-1]).split())[0]).split('-')
     day_add_one = int(time_end_date[2]) + 1
     if day_add_one < 10:
