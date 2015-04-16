@@ -26,6 +26,8 @@ _STAMPS_DIR = '{}/postage_stamps'.format(_DIR_PATH_BASE)
 
 BASEURL = "http://www.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/vospace/auth/synctrans"
 
+_INPUT = 'images_new.txt'
+
 """
 Retrieval of cutouts of the FITS images associated with the CFHT/MegaCam detections.
 Takes a table (get_images.py output) as input
@@ -74,7 +76,7 @@ def get_stamps(familyname, username, password, radius):
 
     print "----- Cutting postage stamps of objects in family {} -----".format(familyname)
 
-    image_list_path = '{}/{}_images_new.txt'.format(_IMAGE_LISTS, familyname)
+    image_list_path = '{}/{}_{}'.format(_IMAGE_LISTS, familyname, _INPUT)
     try:
         table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['object', 'expnum', 'ra', 'dec'],
                               sep=' ', dtype={'Object': object, 'Image': object})
@@ -82,7 +84,7 @@ def get_stamps(familyname, username, password, radius):
         table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0, names=['object', 'expnum', 'ra', 'dec'],
                               sep='\t', dtype={'Object': object, 'Image': object})
 
-    for row in range(4669,len(table)):
+    for row in range(len(table)):
         postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(table['object'][row],
                                                                  table['expnum'][row],
                                                                  table['ra'][row],
