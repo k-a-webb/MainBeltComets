@@ -76,24 +76,12 @@ def do_all_things(familyname, filtertype, imagetype, radius, aperture, thresh):
     password = getpass.getpass("CADC password: ")
 
     # establish input/output
-
     if familyname == 'none':
         vos_dir = '{}/none'.format(_VOS_DIR)
     else:
         vos_dir = '{}/all'.format(_VOS_DIR)
-
     assert storage.exists(vos_dir)
     image_list_path = '{}/{}_images.txt'.format(_IMAGE_LISTS, familyname)  # USING TEST FILE
-    # print "WARNING: USING A TEST FILE ***************************************************************"
-
-    '''
-    # initiate output file
-    out_filename = '{}_output.txt'.format(familyname)
-    with open('{}/{}/{}'.format(_PHOT_DIR, familyname, out_filename), 'w') as outfile:
-        outfile.write("{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n".format(
-            'object', 'expnum', 'ra', 'dec', 'flux', 'mag', 'x', 'y', 'time', 'consistent_f',
-            'consistent_mag', 'diff_ra', 'diff_dec', 'a', 'b', 'theta'))
-    '''
 
     # Remove any fits files hanging around from failed run
     for fits_file in os.listdir(_STAMPS_DIR):
@@ -136,14 +124,14 @@ def do_all_things(familyname, filtertype, imagetype, radius, aperture, thresh):
                 assert storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename))
                 success = False
                 attempts = 0
-
                 while (success is False) and (attempts < 3):
                     success = iterate_thru_images(familyname, str(table['Object'][row]), table['Image'][row], username,
                                                   password, aperture, thresh)
                     attempts += 1
-
                     if attempts == 3:
                         print ' >>>> Last attempt \n'
+                        with open('{}/{}/vos_error.txt'.format(_PHOT_DIR, familyname), 'a') as outfile:
+                            outfile.write('{} {}'.format(table['Object'][row], table['Image'][row]))
 
     else:
         print 'image list path does not exist'
