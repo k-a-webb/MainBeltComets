@@ -204,13 +204,13 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
             return False
         else:
             with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_ERROR), 'a') as outfile:
-                outfile.write('{} {}\n'.format(table['Object'][row], table['Image'][row]))
+                outfile.write('{} {}\n'.format(object_name, expnum_p))
             return True
     except AssertionError, e:
         print e
         print 'Error in JPL query, no ephem start'
         with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_ERROR), 'a') as outfile:
-            outfile.write('{} {}\n'.format(table['Object'][row], table['Image'][row]))
+            outfile.write('{} {}\n'.format(object_name, expnum_p))
         return True
 
 
