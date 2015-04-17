@@ -1,3 +1,7 @@
+
+activate_this = '/Users/admin/Desktop/MainBeltComets/bin/activate_this.py'
+execfile(activate_this, dict(__file__=activate_this))
+
 import argparse
 from cStringIO import StringIO
 import getpass
@@ -26,7 +30,7 @@ _STAMPS_DIR = '{}/postage_stamps'.format(_DIR_PATH_BASE)
 
 BASEURL = "http://www.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/vospace/auth/synctrans"
 
-_INPUT = 'images_new.txt'
+_INPUT = 'images.txt'
 
 """
 Retrieval of cutouts of the FITS images associated with the CFHT/MegaCam detections.
