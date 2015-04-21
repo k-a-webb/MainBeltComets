@@ -14,9 +14,6 @@ import math
 import seaborn as sns
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
-from scipy.stats import linregress
-from scipy.stats import chisquare
-from shapely.geometry import Polygon
 import sys
 
 pd.set_option('display.max_columns', 500)
@@ -39,11 +36,10 @@ _BUFFER1 = 2.5  # aperture of asteroid is this * the fwhm.
 _BUFFER2 = 30.  # the size of the cutout of the asteroid before rotation.
 
 _OUTPUT_NO_MKPSF = '{}/psf_output/no_image_psf.txt'.format(_DIR_PATH_BASE)
-_INPUT_FILE = 'all_output_test.txt'
-_OUTPUT_DETECTION = 'above_3_sig.txt'
+_INPUT_FILE = 'output.txt'
 
 '''
-headers in {}_all_output:
+headers in {}_output:
 object expnum p_x p_y x y x_mid y_mid x-xmid y-ymid a b a2 b2 pf f f2 consist_f consist_mag
 '''
 
@@ -125,12 +121,13 @@ def detect_mbc(family_name, object_name, expnum, i):
     fwhm = storage.get_fwhm(expnum.strip('p'), header[_CCD].split('d')[1])
 
     ast_data = get_asteroid_data(asteroid_id, data, i, fwhm)
-    star_data = get_star_data(expnum, header, asteroid_id, fits_file, data)
+    star_data = get_star_data(expnum, header, asteroid_id, data)
 
     print '-- Comparing PSFs'
-    detection = compare_psf(star_data, ast_data, fwhm)
+    detection, sig = compare_psf(star_data, ast_data, fwhm)
     if detection:
-        write_to_file(asteroid_id, family_name)
+        print '>> Detect possible comae <<'
+        write_to_file(asteroid_id, family_name, sig)
 
 
 def fits_data(object_name, expnum, family_name):
@@ -161,7 +158,7 @@ def fits_data(object_name, expnum, family_name):
                 return header, data, fits_file
 
 
-def get_star_data(expnum, header, object_data, fits_file, exp_data):
+def get_star_data(expnum, header, object_data, exp_data):
     """
     From ossos psf fitted image, calculate line profile
     """
@@ -175,9 +172,7 @@ def get_star_data(expnum, header, object_data, fits_file, exp_data):
     # run seepsf on the mean psf image
     from pyraf import iraf
 
-    stamp_uri = '{}/all/{}'.format(_VOS_DIR, fits_file)
-    header = storage.get_header(stamp_uri)
-    pvwcs = wcs.WCS(header)
+    # pvwcs = wcs.WCS(header)
     # x, y = pvwcs.sky2xy(object_data['ra'].values, object_data['dec'].values)
     x = object_data['x_mid'].values
     y = object_data['y_mid'].values
@@ -254,6 +249,14 @@ def get_asteroid_data(object_data, data, i, fwhm):
     mask = np.ones(data_rot.shape, dtype=bool)
     mask2 = np.zeros(data_rot.shape)
     x_range = range(int(cx - a - ell_buffer + 1), int(cx + a + ell_buffer - 1))
+
+    if x_range[0] < x_min and x_range[-1] > x_max:
+        x_range = range(x_min, x_max)
+    elif x_range[0] < x_min:
+        x_range = range(x_min, int(cx + a + ell_buffer - 1))
+    elif x_range[-1] > x_max:
+        x_range = range(int(cx - a - ell_buffer + 1), x_max)
+
     for x in x_range:
         y1 = int(cy - math.sqrt((a + ell_buffer) ** 2 - (x - cx) ** 2))
         y2 = int(cy + math.sqrt((a + ell_buffer) ** 2 - (x - cx) ** 2))
@@ -261,15 +264,10 @@ def get_asteroid_data(object_data, data, i, fwhm):
             mask[y][x] = False
             mask2[y][x] = 1
 
+    mask2.tofile('mask.txt')
+
     data_cutout = np.ma.array(data_rot, mask=mask)
-    '''
-    # instead of ellipse, try cutting out rectangle
-    x_min2 = cx2 - (a + ell_buffer)
-    x_max2 = cx2 + (a + ell_buffer)
-    y_min2 = cy2 - (b + ell_buffer)
-    y_max2 = cy2 + (a + ell_buffer)
-    data_cutout = (data_rot.values)[y_min2:y_max2, x_min2:x_max2]
-    '''
+
     hdu = fits.PrimaryHDU()
     hdu.data = np.multiply(data_rot, mask2)
     hdu.writeto('cutout_{}.fits'.format(i), clobber=True)
@@ -277,7 +275,11 @@ def get_asteroid_data(object_data, data, i, fwhm):
     data_mean = np.ma.mean(data_cutout, axis=1)
 
     # take the mean of all the values in each ROW
-    return data_mean[np.nonzero(np.ma.fix_invalid(data_mean, fill_value=0))[0]]
+    data_nonzero = data_mean[np.nonzero(np.ma.fix_invalid(data_mean, fill_value=0))[0]]
+    print data_nonzero
+    assert len(data_nonzero) > 0, "All data in cutout is zero"
+
+    return data_nonzero
 
 
 def get_bkg(data):
@@ -318,14 +320,7 @@ def compare_psf(data_str, data_ast, fwhm):
     # fit a gaussian to the asteroid psf and then the star psf
     fitp_ast, fitco_ast = curve_fit(gauss, x_ast, data_ast, p_ast)
     fitp_str, fitco_str = curve_fit(gauss, x_str, data_str, p_str)
-    gauss_ast = fitp_ast[0] * np.exp(-(x_ast - fitp_ast[1]) ** 2 / (2. * fitp_ast[2] ** 2)) + fitp_ast[3]
-    '''
-    with sns.axes_style('ticks'):
-        plt.plot(x_ast, data_ast, label='Ast PSF', ls='--')
-        plt.plot(x_ast, gauss_ast, label='Gaussian fit', ls=':')
-        plt.legend()
-        plt.show()
-    '''
+
     # shift the center of the star psf to the center of the asteroid psf
     gauss_shift = fitp_str[1] - fitp_ast[1]
     x_str_shift = np.subtract(x_str, gauss_shift)
@@ -349,6 +344,7 @@ def compare_psf(data_str, data_ast, fwhm):
     print ratio
     print np.ma.mean(ratio)
 
+
     # normalize the star PSF to the height of the asteroid PSF
     ast_baseline = np.mean(np.sort(data_ast)[:8])
     str_baseline = np.mean(np.sort(data_str)[:8])
@@ -371,20 +367,28 @@ def compare_psf(data_str, data_ast, fwhm):
         plt.legend()
         plt.show()
 
-    off_mean_pts = []
+    abv_3_sig = []
+    abv_4_sig = []
+    abv_5_sig = []
     for i in ratio:
         if abs(i) > 3:
-            off_mean_pts.append(i)
-    if len(off_mean_pts) > 1:
-        print '>> Detect possible comae <<'
-        return True
+            abv_3_sig.append(i)
+        if abs(i) > 4:
+            abv_4_sig.append(i)
+        if abs(i) > 5:
+            abv_5_sig.append(i)
+    if len(abv_5_sig) > 2:
+        return True, 5
+    elif len(abv_4_sig) > 2:
+        return True, 4
+    elif len(abv_3_sig) > 2:
+        print True, 3
     else:
-        print '>> No detection'
-        return False
+        return False, 0
 
 
-def write_to_file(asteroid_id, family_name):
-    with open('{}/{}/{}'.format(_PHOT_DIR, family_name, _OUTPUT_DETECTION), 'a') as outfile:
+def write_to_file(asteroid_id, family_name, sig):
+    with open('{}/{}/abv_{}_sig.txt'.format(_PHOT_DIR, family_name, sig), 'a') as outfile:
         outfile.write('{} {}'.format(asteroid_id['object'].values[0], asteroid_id['expnum'].values[0]))
 
 
