@@ -13,16 +13,16 @@ import math
 import pandas as pd
 from astropy.coordinates import SkyCoord
 import sys
+from get_images import get_image_info
+import get_stamps
 
 sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/ossos')
 from ossos import daophot
 from ossos import storage
 from ossos import wcs
+
 sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/planning')
 from planning.plotting.horizons import batch
-
-from get_images import get_image_info
-import get_stamps
 
 pd.set_option('display.max_columns', 500)
 client = vos.Client()
@@ -33,7 +33,7 @@ _STAMPS_DIR = '{}/postage_stamps'.format(_DIR_PATH_BASE)
 _IMAGE_LISTS = '{}/image_lists'.format(_DIR_PATH_BASE)
 _OUTPUT_DIR = '{}/phot_output'.format(_DIR_PATH_BASE)
 
-_INPUT_FILE = 'images_new.txt'
+_INPUT_FILE = 'images.txt'
 
 _OUTPUT_MULT_ID = 'multiple_iden.txt'
 _OUTPUT_NO_COND_MET = 'no_cond_met.txt'
@@ -46,12 +46,14 @@ _OUTPUT_ERROR = 'unknown_error.txt'
 _OUTPUT_VOS_ERR = 'vos_err.txt'
 
 _RADIUS = 0.01  # default radius of cutout
-_ERR_ELL_RAD = 15  # default radius of the error ellipse
+_ERR_ELL_RAD = 30  # minimum radius of nearest neighbour search
 _MAG_ERR = 2  # default min range of magnitude from predicted by JPL
 _CAT_r_TOL = 5 * 0.184 / 3600  # Tolerance for error in RA DEC position from Stephens catalogue [pixels to degrees]
 _CAT_mag_TOL = 1  # Tolerance for error in measured magnitude from Stephens catalogue
 _F_ERR = 10.0  # Tolerance for error in calculation focal length
 _BUFFER_POLY = 10  # Buffer [pix] around polygon surrounding the object in the catagloue comparison
+_A_MAX = 50  # Maximum pixels expected to be measured for semi-major axis
+_B_MAX = 40  # Maximum pixels expected to be measured for semi-minor axis
 
 '''
 Preforms photometry on .fits files given an input of family name and object name
@@ -59,12 +61,13 @@ Identifies object in image from predicted coordinates, elongation, and magnitude
 Checks that there is enough background stars and that the object is not involved
 
 Assumes files organised as:
-dir_path_base/asteroid_families/familyname/familyname_stamps/*.fits
+dir_path_base/postage_stamps/familyname_stamps/*.fits
     - where postage stamps are temporarily copied to from VOSpace
-dir_path_base/asteroid_families/familyname/*_images.txt
+dir_path_base/image_lists/*_images.txt
     - list of image exposures, predicted RA and DEC, dates etc.
 vos:kawebb/postage_stamps/familyname/*.fits
     - where postage stamps are stored on VOSpace
+    - familyname is either 'all' or 'none' depending on family designation
 '''
 
 
@@ -87,7 +90,7 @@ def main():
     parser.add_argument("--object", '-o',
                         action='store',
                         default=None,
-                        help='The object to be identified.') # Not used currently
+                        help='The object to be identified.')  # Not used currently
     parser.add_argument('--type',
                         default='p',
                         choices=['o', 'p', 's'],
@@ -137,7 +140,7 @@ def find_objects_by_phot(family_name, aperture, thresh, imagetype):
                               names=['Object', 'Image', 'RA', 'DEC'],
                               sep='\t', dtype={'Object': object, 'Image': object})
 
-    for row in range(57, len(table)):
+    for row in range(len(table)):
         print "\n {} --- Searching for asteroid {} in image {} ".format(row, table['Object'][row], table['Image'][row])
 
         expnum = (table['Image'][row]).strip('{}'.format(imagetype))
@@ -147,6 +150,7 @@ def find_objects_by_phot(family_name, aperture, thresh, imagetype):
         else:
             postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(table['Object'][row], table['Image'][row],
                                                                      table['RA'][row], table['DEC'][row])
+
             if not storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)):
                 print '-- Cutout not found, creating new cutout'
                 get_stamps.cutout(username, password, family_name, table['Object'][row], table['Image'][row],
@@ -171,32 +175,30 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
     """
     try:
         septable, header, data = get_fits_data(object_name, expnum_p, family_name, ap, th)
-        exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd = get_header_info(header)
 
         print "-- Querying JPL Horizon's ephemeris"
-        mag_list_jpl, r_sig = get_mag_rad(family_name, object_name)
-        p_ra, p_dec, ra_dot, dec_dot = get_coords(str(object_name), start, end)
+        mag_list_jpl, r_sig = get_mag_rad(object_name, header)
+        p_ra, p_dec, ra_dot, dec_dot = get_coords(str(object_name), header)
 
-        table = append_table(septable, pvwcs, zeropt, p_ra, p_dec)
-        transients, catalogue, catalog_stars = compare_to_catalogue(table)
+        table = append_table(septable, header, p_ra, p_dec)
+        transients, catalogue = compare_to_catalogue(table)
 
-        good_neighbours, r_err, p_f, p_mag = iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
-                                                                  expnum_p, mag_list_jpl, ra_dot, dec_dot, exptime,
-                                                                  family_name)
+        objs_met_cond, r_err, p_f, p_mag = iden_good_neighbours(family_name, object_name, transients, header, r_sig,
+                                                                p_ra, p_dec, expnum_p, mag_list_jpl, ra_dot, dec_dot)
 
-        if (len(good_neighbours) != 1) or (len(good_neighbours) is None):
+        if (len(objs_met_cond) != 1) or (len(objs_met_cond) is None):
             return True
 
-        involved = check_involvement(good_neighbours, catalogue, r_err, pvwcs, size_x, size_y)
+        involved = check_involvement(good_neighbours, catalogue, r_err, header)
         if involved:
             write_to_error_file(object_name, expnum_p, _OUTPUT_INVOLVED, family_name)
             return True
 
-        write_to_file(family_name, object_name, expnum_p, good_neighbours, header, p_ra, p_dec, p_f, p_mag,
-                      '{}_{}'.format(family_name, _OUTPUT_ALL))
+        write_to_file(family_name, object_name, expnum_p, objs_met_cond, header, p_ra, p_dec, p_f,
+                      p_mag)
         print '-- Cutting out recentered postage stamp'
         # cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, _RADIUS, username, password)
-        return good_neighbours
+        return objs_met_cond
 
     except Exception, e:
         print 'ERROR: {}'.format(e)
@@ -254,28 +256,6 @@ def get_fits_data(object_name, expnum_p, family_name, ap, th):
         raise
 
 
-def get_header_info(header):
-    """
-    Get values from image header
-    """
-
-    pvwcs = wcs.WCS(header)
-    size_x = header['NAXIS1']
-    size_y = header['NAXIS2']
-    zeropt = header['PHOTZP']
-    exptime = header['EXPTIME']
-    size_ccd = header['CCDSIZE']
-    start = '{} {}'.format(header['DATE-OBS'], header['UTIME'])
-    end = '{} {}'.format(header['DATEEND'], header['UTCEND'])
-
-    if size_x > size_y:
-        size = size_x
-    else:
-        size = size_y
-
-    return exptime, zeropt, size, pvwcs, start, end, size_x, size_y, size_ccd
-
-
 def sep_phot(data, ap, th):
     """
     Preforms photometry by SEP, similar to source extractor
@@ -313,42 +293,23 @@ def sep_phot(data, ap, th):
     return objs
 
 
-def get_mag_rad(family_name, object_name):
+def get_mag_rad(object_name, header):
     """
     Queries the JPL horizon's ephemeris for the variation in magnitude over the time eriod of all images of the object
     and for the radius of the error ellipse
     """
 
-    if type(object_name) is not str:
-        object_name = str(object_name)
+    # search for values for 10 days past observation
+    date_start = Time(header['DATE-OBS'], format='iso', scale='utc')
+    date_end = Time(date_start.mjd + 10, format='mjd', scale='utc')
 
-    # from familyname_images.txt get date range of images for objectname
-    date_range = []
-    with open('{}/{}_images.txt'.format(_IMAGE_LISTS, family_name)) as infile:
-        for line in infile.readlines()[1:]:
-            if len(line.split()) > 0:
-                if object_name == line.split()[0]:
-                    date_range.append(float(line.split()[5]))
+    print " Date range in magnitude query: {} -- {}".format(date_start.iso, date_end.iso)
 
-    date_range_t = Time(date_range, format='mjd', scale='utc')
-    assert len(date_range_t.iso) > 0
-    time_start = ((date_range_t.iso[0]).split())[0] + ' 00:00:00.0'
-    time_end = ((date_range_t.iso[-1]).split())[0] + ' 00:00:00.0'
-
-    if time_start == time_end:
-        time_end = add_day(date_range_t)
-
-    print " Date range in query: {} -- {}".format(time_start, time_end)
-
-    # output = batch("Haumea", "2010-12-28 10:00", "2010-12-29 10:00", 1, su='d')
-    orbital_elements, ephemerides = batch(object_name, time_start, time_end, step=1, su='d', params=[9, 36])
-    # ephemerides = query_jpl(object_name, time_start, time_end, params=[9, 36], step=1)
+    orbital_elements, ephemerides = batch(object_name, date_start.iso, date_end.iso, step=1, su='d', params=[9, 36])
 
     mag_list = np.array(ephemerides.icol(2))
     ra_sig = np.mean(np.mean(ephemerides.icol(3)))
     dec_sig = np.mean(np.mean(ephemerides.icol(4)))
-
-    # print '>> RA and DEC 3sigma error: {:.2f} {:.2f}'.format(ra_sig / 0.184, dec_sig / 0.184)
 
     if ra_sig > dec_sig:
         r_sig = ra_sig / 0.184
@@ -361,10 +322,13 @@ def get_mag_rad(family_name, object_name):
     return mag_list, r_sig
 
 
-def get_coords(object_name, time_start, time_end):
+def get_coords(object_name, header):
     """
     Queries the JPL Horizon's ephemeris for rate of change of RA and DEC for a specific day
     """
+
+    time_start = '{} {}'.format(header['DATE-OBS'], header['UTIME'])
+    time_end = '{} {}'.format(header['DATEEND'], header['UTCEND'])
 
     assert type(object_name) is str
     orbital_elements, ephemerides = batch(object_name, time_start, time_end, step=1, su='m', params=[1, 3])
@@ -375,21 +339,15 @@ def get_coords(object_name, time_start, time_end):
     ra_dot_cos_dec = ephemerides[' dRA*cosD'][mid]
     dec_dot = ephemerides['d(DEC)/dt'][mid]
 
-    ra_h = ra.split()[0]
-    ra_m = ra.split()[1]
-    ra_s = ra.split()[2]
-    dec_d = dec.split()[0]
-    dec_m = dec.split()[1]
-    dec_s = dec.split()[2]
-
-    c = SkyCoord('{}h{}m{}s'.format(ra_h, ra_m, ra_s), '{}d{}m{}s'.format(dec_d, dec_m, dec_s), frame='icrs')
+    c = SkyCoord('{}h{}m{}s'.format(ra.split()[0], ra.split()[1], ra.split()[2]), '{}d{}m{}s'.format(
+        dec.split()[0], dec.split()[1], dec.split()[2]), frame='icrs')
     ra_deg = c.ra.degree
     dec_deg = c.dec.degree
 
     return ra_deg, dec_deg, ra_dot_cos_dec, dec_dot
 
 
-def append_table(objs, pvwcs, zeropt, p_ra, p_dec):
+def append_table(objs, header, p_ra, p_dec):
     """
     Calculates the RA and DEC and MAG and adds columns to the tale from the photometry
     """
@@ -400,8 +358,6 @@ def append_table(objs, pvwcs, zeropt, p_ra, p_dec):
                           'y2': objs['y2'],
                           'a': objs['a'],
                           'b': objs['b'],
-                          # 'cxx': objs['cxx'],
-                          # 'cyy': objs['cyy'],
                           'xmin': objs['xmin'],
                           'xmax': objs['xmax'],
                           'ymin': objs['ymin'],
@@ -412,32 +368,21 @@ def append_table(objs, pvwcs, zeropt, p_ra, p_dec):
 
     ra_list = []
     dec_list = []
-    mag_sep_list = []
-    f_list = []
-    diff_ra = []
-    diff_dec = []
-    x_mid = []
-    y_mid = []
-
+    pvwcs = wcs.WCS(header)
     for row in range(len(table)):
         ra, dec = pvwcs.xy2sky(table['x'][row], table['y'][row])
         ra_list.append(ra)
         dec_list.append(dec)
-        mag_sep_list.append(-2.5 * math.log10(table['flux'][row]) + zeropt)
-        f_list.append(math.sqrt(table['a'][row] ** 2 - table['b'][row] ** 2))
-        diff_ra.append((p_ra - ra) * 3600)
-        diff_dec.append((p_dec - dec) * 3600)
-        x_mid.append(0.5 * (table['xmax'][row] - table['xmin'][row]) + table['xmin'][row])
-        y_mid.append(0.5 * (table['ymax'][row] - table['ymin'][row]) + table['ymin'][row])
 
     table['ra'] = ra_list
     table['dec'] = dec_list
-    table['mag'] = mag_sep_list
-    table['f'] = f_list
-    table['diff_ra'] = diff_ra
-    table['diff_dec'] = diff_dec
-    table['y_mid'] = y_mid
-    table['x_mid'] = x_mid
+    table['diff_ra'] = np.subtract(ra_list, p_ra) * 3600
+    table['diff_dec'] = np.subtract(dec_list, p_dec) * 3600
+    table['mag'] = -2.5 * np.log10(table['flux'].values) + header['PHOTZP']
+    table['f'] = np.sqrt(np.square(table['a'].values) - np.square(table['b'].values))
+    table['x_mid'] = 0.5 * (table['xmax'].values - table['xmin'].values) + table['xmin'].values
+    table['y_mid'] = 0.5 * (table['ymax'].values - table['ymin'].values) + table['ymin'].values
+
     return table
 
 
@@ -479,9 +424,8 @@ def compare_to_catalogue(sep_table):
         print "WARNING: No transients identified"
 
     transients = sep_table.loc[trans_list, :]
-    catalog_stars = sep_table.loc[cat_list, :]
 
-    return transients, catalogue, catalog_stars
+    return transients, catalogue
 
 
 def find_neighbours(transients, r_sig, p_x, p_y):
@@ -489,7 +433,6 @@ def find_neighbours(transients, r_sig, p_x, p_y):
     Parse through sep output to find objects within a radius r_sig of the predicted location of the asteroid
     """
     found = True
-
     i_list = neighbour_search(transients, r_sig, p_x, p_y)
     if len(i_list) == 0:
         print '-- Expanding radius of nearest neighbour search by 1.5x'
@@ -514,8 +457,8 @@ def neighbour_search(transients, r_sig, p_x, p_y):
     return i_list
 
 
-def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
-                         expnum, mag_list_jpl, ra_dot, dec_dot, exptime, family_name):
+def iden_good_neighbours(family_name, object_name, transients, header, r_sig, p_ra, p_dec,
+                         expnum, mag_list_jpl, ra_dot, dec_dot):
     """
     Selects nearest neighbour object from predicted coordinates as object of interest
     In order:
@@ -523,83 +466,76 @@ def iden_good_neighbours(object_name, transients, pvwcs, r_sig, p_ra, p_dec,
         Calculates eccentricity, passes if greater than minimum value that is inputted
     """
 
+    pvwcs = wcs.WCS(header)
     p_x, p_y = pvwcs.sky2xy(p_ra, p_dec)
     print "  Predicted RA, DEC : {:.4f}  {:.4f}".format(p_ra, p_dec)
     print "  Predicted x, y : {:.2f}  {:.2f}".format(p_x, p_y)
 
     # Set theoretical magnitude as mean of range with uncertainty of _MAG_ERR or magnitude variance
-    mean = np.mean(mag_list_jpl)
-    maxmag = np.amax(mag_list_jpl)
-    minmag = np.amin(mag_list_jpl)
-    if _MAG_ERR > maxmag - minmag:
-        magrange = _MAG_ERR
+    p_mag = np.mean(mag_list_jpl)
+    if _MAG_ERR > np.amax(mag_list_jpl) - np.amin(mag_list_jpl):
+        mag_err = _MAG_ERR
     else:
-        magrange = maxmag - minmag
+        mag_err = np.amax(mag_list_jpl) - np.amin(mag_list_jpl)
 
     # calculate theoretical focal length
-    f_pix = 0.5 * ((ra_dot / 2) ** 2 + (dec_dot / 2) ** 2) ** 0.5 * (exptime / (3600 * 0.184))
-    f_pix_err = (_F_ERR / 100) * 0.5 * (abs(ra_dot) + abs(dec_dot)) * (exptime / (3600 * 0.184))
-    assert f_pix_err != 0
+    p_f = 0.5 * ((ra_dot / 2) ** 2 + (dec_dot / 2) ** 2) ** 0.5 * (header['EXPTIME'] / (3600 * 0.184))
+    p_f_err = (_F_ERR / 100) * 0.5 * (abs(ra_dot) + abs(dec_dot)) * (header['EXPTIME'] / (3600 * 0.184))
+    assert p_f_err != 0, 'Focal length calculated to be zero'
 
-    if f_pix > 10:
+    if p_f > 10:
         print '>> Asteroid is predicted to have high elongation'
-
-    print '  Theoretical focal length: {:.2f} +/- {:.2f}'.format(f_pix, f_pix_err)
-    print '  Theoretical magnitude: {:.2f} +/- {:.2f}'.format(mean, magrange)
+    print '  Theoretical focal length: {:.2f} +/- {:.2f}'.format(p_f, p_f_err)
+    print '  Theoretical magnitude: {:.2f} +/- {:.2f}'.format(p_mag, mag_err)
 
     # parse SEP output for transients in radius r_sig from predicted location of the asteroid
-    print '-- Identifying object from nearest neighbours within {} pixels'.format(r_sig)
     i_list, found = find_neighbours(transients, r_sig, p_x, p_y)
     if not found:
-        with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_NOT_FOUND), 'a') as infile:
-            infile.write('{} {} {} {} {} {} {} {}\n'.format(object_name, expnum, p_ra, p_dec, p_x, p_y, f_pix, mean))
+        write_not_found(family_name, object_name, expnum, p_ra, p_dec, p_x, p_y, p_f, p_mag)
         raise Exception
 
     # build a table of the candidate transients, check if meet elongation and magnitude conditions
     i_table = transients.iloc[i_list, :]  # row, column
 
     # check that SEP phot values make sense
-    for row in i_table:
-        if not (i_table['theta'][row] > - np.pi / 2) and (i_table['theta'][row] < np.pi / 2) and (
-                i_table['a'][row] < 30) and (i_table['b'][row] < 20):
-            with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_PHOT_MEAS_ERR), 'a') as outfile:
-                outfile.write('{} {} {} {} {} {} {} {}\ncandidates:\n{} {} {} {} {} {}'.format(
-                    i_table['object_name'][row], i_table['expnum'][row], p_ra, p_dec, p_x, p_y, f_pix, mean,
-                    i_table['ra'][row], i_table['dec'][row], i_table['x'][row], i_table['y'][row],
-                    i_table['f'][row], i_table['mag'][row]))
+    for i in i_list:
+        if not (i_table['theta'][i] > - np.pi / 2) and (i_table['theta'][i] < np.pi / 2) and (
+                i_table['a'][i] < _A_MAX) and (i_table['b'][i] < _B_MAX):
+            print 'PHOT measurement error: {} {} {}'.format(i_table['theta'][i], i_table['a'][i], i_table['b'][i])
+            write_phot_meas_err(family_name, p_ra, p_dec, p_x, p_y, p_f, p_mag, i_table, i)
             return
 
-    both_cond = i_table.query('({} < f < {}) & ({} < mag < {})'.format(f_pix - f_pix_err, f_pix + f_pix_err,
-                                                                       mean - magrange, mean + magrange))
-    only_f_cond = i_table.query('{} < f < {}'.format(f_pix - f_pix_err, f_pix + f_pix_err))
-    only_mag_cond = i_table.query('{} < mag < {}'.format(mean - magrange, mean + magrange))
+    both_cond = i_table.query('({} < f < {}) & ({} < mag < {})'.format(p_f - p_f_err, p_f + p_f_err,
+                                                                       p_mag - mag_err, p_mag + mag_err))
+    only_f_cond = i_table.query('{} < f < {}'.format(p_f - p_f_err, p_f + p_f_err))
+    only_mag_cond = i_table.query('{} < mag < {}'.format(p_mag - mag_err, p_mag + mag_err))
 
     if len(both_cond) > 0:
         print '>> Both conditions met by:'
         both_cond2 = add_to_object_table(both_cond, 'yes', 'yes')
         print both_cond2
         if len(both_cond2) > 1:
-            write_multp_id(object_name, expnum, both_cond2, family_name, p_ra, p_dec, p_x, p_y, f_pix, mean)
-        return both_cond2, f_pix_err, f_pix, mean
+            write_multp_id(object_name, expnum, both_cond2, family_name, p_ra, p_dec, p_x, p_y, p_f, p_mag)
+        return both_cond2, p_f_err, p_f, p_mag
     elif len(only_f_cond) > 0:
         print '>> Elongation is consistent, magnitude is not:'
         only_f_cond2 = add_to_object_table(only_f_cond, 'yes', 'no')
         print only_f_cond2
         if len(only_f_cond2) > 1:
-            write_multp_id(object_name, expnum, only_f_cond2, family_name, p_ra, p_dec, p_x, p_y, f_pix, mean)
-        return only_f_cond2, f_pix_err, f_pix, mean
+            write_multp_id(object_name, expnum, only_f_cond2, family_name, p_ra, p_dec, p_x, p_y, p_f, p_mag)
+        return only_f_cond2, p_f_err, p_f, p_mag
     elif len(only_mag_cond) > 0:
         print '>> Magnitude is consistent, elongation is not:'
         only_mag_cond2 = add_to_object_table(only_mag_cond, 'no', 'yes')
         print only_mag_cond2
         if len(only_mag_cond2) > 1:
-            write_multp_id(object_name, expnum, only_mag_cond2, family_name, p_ra, p_dec, p_x, p_y, f_pix, mean)
-        return only_mag_cond2, f_pix_err, f_pix, mean
+            write_multp_id(object_name, expnum, only_mag_cond2, family_name, p_ra, p_dec, p_x, p_y, p_f, p_mag)
+        return only_mag_cond2, p_f_err, p_f, p_mag
     else:
         print "WARNING: No condition could be satisfied <<<<<<<<<<<<<<<<<<<<<<<<<<<<"
         print '  Nearest neighbours:'
         print i_table
-        write_no_cond_met(object_name, expnum, i_table, family_name, p_x, p_y, p_ra, p_dec, f_pix, mean)
+        write_no_cond_met(object_name, expnum, i_table, family_name, p_x, p_y, p_ra, p_dec, p_f, p_mag)
         return
 
 
@@ -624,10 +560,15 @@ def add_to_object_table(table, first, second):
     return table3
 
 
-def check_involvement(object_data, catalogue, r_err, pvwcs, size_x, size_y):
+def check_involvement(object_data, catalogue, r_err, header):
     """
     Determine whether two objects are involved (ie overlapping psf's)
     """
+
+    pvwcs = wcs.WCS(header)
+    size_x = header['NAXIS1']
+    size_y = header['NAXIS2']
+
     object_data.reset_index(drop=True, inplace=True)
     ra = object_data['ra'][0]
     dec = object_data['dec'][0]
@@ -657,23 +598,21 @@ def check_involvement(object_data, catalogue, r_err, pvwcs, size_x, size_y):
         return False
 
 
-def write_to_file(family_name, object_name, expnum, object_data, header, p_ra, p_dec, p_f, p_mag, out_filename):
+def write_to_file(family_name, object_name, expnum, object_data, header, p_ra, p_dec, p_f, p_mag):
     """
     Prints to outfile
     """
 
-    date = header['DATE-OBS']
-    start_mjd = Time('{}T{}'.format(header['DATE-OBS'], header['UTIME']), format='isot').mjd
-    end_mjd = Time('{}T{}'.format(header['DATE-OBS'], header['UTCEND']), format='isot').mjd
-    time = (end_mjd - start_mjd) / 2
-    date_time = '{}-{}'.format(date, time)
+    date_start = Time('{} {}'.format(header['DATE-OBS'], header['UTIME']), format='iso', scale='utc')
+    date_end = Time('{} {}'.format(header['DATE-OBS'], header['UTCEND']), format='iso', scale='utc')
+    date_mid = 0.5 * (date_end.mjd - date_start.mjd) + date_start.mjd
 
     pvwcs = wcs.WCS(header)
     p_x, p_y = pvwcs.sky2xy(p_ra, p_dec)
 
     if object_data is not None:
-        with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, out_filename), 'a') as outfile:
-            for i in range(0, len(object_data)):
+        with open('{}/{}/{}_{}'.format(_OUTPUT_DIR, family_name, family_name, _OUTPUT_ALL), 'a') as outfile:
+            for i in range(len(object_data)):
                 outfile.write(
                     '{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n'.format(
                         object_name, expnum, p_ra, p_dec, object_data['ra'][i], object_data['dec'][i],
@@ -683,7 +622,7 @@ def write_to_file(family_name, object_name, expnum, object_data, header, p_ra, p
                         object_data['a'][i], object_data['b'][i], object_data['theta'][i],
                         p_f, object_data['f'][i], object_data['consistent_f'][i],
                         p_mag, object_data['mag'][i], object_data['flux'][i], object_data['consistent_mag'][i],
-                        date_time))
+                        date_mid))
 
     else:
         print "WARNING: Could not identify object {} in image".format(object_name, expnum_p)
@@ -740,6 +679,19 @@ def write_multp_id(object_name, expnum, object_data, family_name, p_ra, p_dec, p
             print "ERROR: cannot write to outfile {} <<<<<<<<<<<<".format(e)
 
 
+def write_not_found(family_name, object_name, expnum, p_ra, p_dec, p_x, p_y, p_f, p_mag):
+    with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_NOT_FOUND), 'a') as infile:
+            infile.write('{} {} {} {} {} {} {} {}\n'.format(object_name, expnum, p_ra, p_dec, p_x, p_y, p_f, p_mag))
+
+
+def write_phot_meas_err(family_name, p_ra, p_dec, p_x, p_y, p_f, p_mag, i_table, row):
+    with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_PHOT_MEAS_ERR), 'a') as outfile:
+                outfile.write('{} {} {} {} {} {} {} {}\ncandidates:\n{} {} {} {} {} {}'.format(
+                    i_table['object_name'][row], i_table['expnum'][row], p_ra, p_dec, p_x, p_y, p_f, p_mag,
+                    i_table['ra'][row], i_table['dec'][row], i_table['x'][row], i_table['y'][row],
+                    i_table['f'][row], i_table['mag'][row]))
+
+
 def cut_centered_stamp(family_name, object_name, expnum_p, object_data, r_old, username, password):
     if object_data is not None:
         # for i in range(0, len(object_data)):
@@ -747,32 +699,6 @@ def cut_centered_stamp(family_name, object_name, expnum_p, object_data, r_old, u
         print '-- Cutting recentered stamp'
         get_stamps.centered_stamp(object_name, expnum_p, r_old, object_data[0][5], object_data[0][6], username,
                                   password, family_name)
-
-
-def add_day(date_range_t):
-    """
-    Return given date plus one day (or there abouts)
-    """
-
-    time_end_date = (((date_range_t.iso[-1]).split())[0]).split('-')
-    day_add_one = int(time_end_date[2]) + 1
-    if day_add_one < 10:
-        day = '0{}'.format(day_add_one)
-    else:
-        day = day_add_one
-    month = int(time_end_date[1])
-    year = int(time_end_date[0])
-    if day > 27:
-        day = 1
-        if month == 12:
-            month = 1
-            year += 1
-        else:
-            month += 1
-
-    time_end = '{}-{}-{} 00:00:00.0'.format(year, month, day)
-    return time_end
-
 
 if __name__ == '__main__':
     main()
