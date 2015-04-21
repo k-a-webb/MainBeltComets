@@ -1,7 +1,5 @@
 import datetime
 import os
-import warnings
-
 from astropy.io import ascii
 from astropy.time import Time
 import requests
@@ -13,6 +11,7 @@ SSOS_URL = "http://www.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/cadcbin/ssos/ssos.pl"
 RESPONSE_FORMAT = 'tsv'
 NEW_LINE = '\r\n'
 
+
 class ParamDictBuilder(object):
     """ Build a dictionary of parameters needed for an SSOS Query. """
 
@@ -21,7 +20,7 @@ class ParamDictBuilder(object):
                  verbose=False,
                  search_start_date=Time('2013-01-01', scale='utc'),
                  search_end_date=Time('2017-01-01', scale='utc'),
-                 search_method='bynameMPC',
+                 search_method='bynameCADC',
                  error_units='arcseconds',
                  resolve_extension=True,
                  resolve_position=True):
@@ -40,12 +39,12 @@ class ParamDictBuilder(object):
         The mbcobjects to be used searched 
         """
         return self._mbcobject
-        
+
     @mbcobject.setter
     def mbcobject(self, mbcobject):
- 
+
         self._mbcobject = mbcobject
-        
+
         """
         self._mbcobject = []
         for mbc in mbcobject:
@@ -113,9 +112,10 @@ class ParamDictBuilder(object):
         try:
             assert search_method in ['bynameCADC', 'bynameMPC', 'bynameLowell', 'bynameHorizons']
         except AssertionError, e:
-            raise AssertionError('{} not in {}'.format(search_method, ['bynameCADC', 'bynameMPC', 'bynameLowell', 'bynameHorizons']))
+            raise AssertionError(
+                '{} not in {}'.format(search_method, ['bynameCADC', 'bynameMPC', 'bynameLowell', 'bynameHorizons']))
         self._search_method = search_method
-        
+
     @property
     def error_units(self):
         """
@@ -128,7 +128,7 @@ class ParamDictBuilder(object):
         """
         :param error_units: 
         """
-        
+
         self._error_units = error_units
 
     @property
@@ -172,10 +172,11 @@ class ParamDictBuilder(object):
                     eunits=self.error_units,
                     extres=self.resolve_extension,
                     xyres=self.resolve_position,
-                    object = self.mbcobject
+                    object=self.mbcobject
                     )
-                   
-                    # obs=NEW_LINE.join((str(observation) for observation in self.observations))
+
+        # obs=NEW_LINE.join((str(observation) for observation in self.observations))
+
 
 class Query(object):
     """
@@ -198,9 +199,9 @@ class Query(object):
                  mbcobject,
                  search_start_date=Time('2013-01-01', scale='utc'),
                  search_end_date=Time('2017-01-01', scale='utc')):
-        self.param_dict_builder = ParamDictBuilder( mbcobject,
-                search_start_date=search_start_date,
-                search_end_date=search_end_date)
+        self.param_dict_builder = ParamDictBuilder(mbcobject,
+                                                   search_start_date=search_start_date,
+                                                   search_end_date=search_end_date)
 
         self.headers = {'User-Agent': 'OSSOS Images'}
 
@@ -210,8 +211,8 @@ class Query(object):
         :raise: AssertionError
         """
         params = self.param_dict_builder.params
-        #print("{}\n".format(params))
-        
+        # print("{}\n".format(params))
+
         self.response = requests.post(SSOS_URL, data=params, headers=self.headers)
         # print(self.response.url)
         try:
@@ -219,7 +220,7 @@ class Query(object):
         except AssertionError, e:
             raise AssertionError('response not instance of requests.Response')
         try:
-            assert(self.response.status_code == requests.codes.ok )
+            assert (self.response.status_code == requests.codes.ok )
         except AssertionError, e:
             raise AssertionError('response.status_code =! requests.codes.ok')
 

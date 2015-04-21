@@ -1,19 +1,12 @@
-import datetime
 import os
 from astropy.io import ascii
 from astropy.time import Time
 import requests
 import argparse
-
 import sys
-
-sys.path.append('User/admin/Desktop/OSSOS/MOP/src/ossos-pipeline/ossos')
-# from ossos.ssos import Query WHY DOESNT THIS WORK?
-from ossos_scripts.ssos import Query
-
 import time
-import pandas as pd
 import find_family
+from ossos_scripte.ssois_query import Query
 
 _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
 _FAMILY_LISTS = '{}/family_lists'.format(_DIR_PATH_BASE)
@@ -59,19 +52,17 @@ def get_image_info(familyname, filtertype='r', imagetype='p'):
     """
 
     # establish input/output
-    # family_list = '{}/{}_family.txt'.format(_FAMILY_LISTS, familyname)
-    family_list = 'image_lists/all_images_new_missing.txt'
-    output = '{}/{}_images_new_found.txt'.format(_OUTPUT_DIR, familyname)
+    family_list = '{}/{}_family.txt'.format(_FAMILY_LISTS, familyname)
+    output = '{}/{}_images_newer2.txt'.format(_OUTPUT_DIR, familyname)
 
     if os.path.exists(family_list):
         with open(family_list) as infile:
             filestr = infile.read()
         object_list = filestr.split('\n')  # array of objects to query
+    elif familyname == 'all':
+        object_list = find_family.get_all_families_list()
     else:
-        if familyname == 'all':
-            object_list = find_family.get_all_families_list()
-        else:
-            object_list = find_family.find_family_members(familyname)
+        object_list = find_family.find_family_members(familyname)
 
     # From the given input, identify the desired filter and rename appropriately
     if filtertype.lower().__contains__('r'):
@@ -88,9 +79,7 @@ def get_image_info(familyname, filtertype='r', imagetype='p'):
         outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(
             "Object", "Image", "Exp_time", "RA", "DEC", "time", "filter"))
 
-    print "----- \n Searching for images of objects in family {} from CFHT/Megacam from the MPC ephemeris".format(
-        familyname)
-    print " with filter {} and exposure time of 287, 387, 500 seconds (OSSOS data) \n-----".format(filtertype)
+    print "----- \n Searching for images of objects in family {}".format(familyname)
 
     image_list = []
     expnum_list = []
@@ -102,14 +91,9 @@ def get_image_info(familyname, filtertype='r', imagetype='p'):
         try:
             objects = parse_ssois_return(query.get(), object_name, imagetype, camera_filter=filtertype)
         except IOError:
-            time.sleep(20)
-            print "Sleeping 20 seconds"
-            try:
-                objects = parse_ssois_return(query.get(), object_name, imagetype, camera_filter=filtertype)
-            except IOError:
-                time.sleep(40)
-                print "Sleeping 40 seconds"
-                objects = parse_ssois_return(query.get(), object_name, imagetype, camera_filter=filtertype)
+            print "Sleeping 30 seconds"
+            time.sleep(30)
+            objects = parse_ssois_return(query.get(), object_name, imagetype, camera_filter=filtertype)
 
         for line in objects:
             with open(output, 'a') as outfile:
@@ -150,16 +134,13 @@ def parse_ssois_return(ssois_return, object_name, imagetype, camera_filter='r.MP
         # Excludes the OSSOS wallpaper.
         # note: 'Telescope_Insturment' is a typo in SSOIS's return format
         exp_times = [287, 387, 500]
-        if (row['Telescope_Insturment'] == telescope_instrument) and \
-                (row['Filter'] == camera_filter) and \
-                        int(row['Exptime']) in exp_times and \
-                (row['Image'].endswith('{}'.format(imagetype))) and not \
-                str(row['Image_target']).startswith('WP'):
-            good_table += 1
-            ret_table.append(row)
+        if (row['Telescope_Insturment'] == telescope_instrument) and (row['Filter'] == camera_filter) and \
+                int(row['Exptime']) in exp_times and (row['Image'].endswith('{}'.format(imagetype))):
+            if not str(row['Image_target']).startswith('WP'):
+                good_table += 1
+                ret_table.append(row)
 
     print "Searching for object %s " % object_name
-
     if good_table > 0:
         print " %d images found" % good_table
 
