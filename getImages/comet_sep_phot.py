@@ -133,16 +133,9 @@ def find_objects_by_phot(family_name, aperture, thresh, imagetype):
             tkbad_list.append(line.split(' ')[0])
 
     # for each image of each object, make cutout and go to sep_phot
-    try:
-        table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0,
-                              names=['Object', 'Image', 'RA', 'DEC'],
-                              sep=' ', dtype={'Object': object, 'Image': object})
-    except pd.parser.CParserError:
-        table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0,
-                              names=['Object', 'Image', 'RA', 'DEC'],
-                              sep='\t', dtype={'Object': object, 'Image': object})
+    table = pd.read_table(image_list_path, sep=' ', dtype={'Object': object})
 
-    for row in range(len(table)):
+    for row in range(0, 2):  # len(table)):
         print "\n {} --- Searching for asteroid {} in image {} ".format(row, table['Object'][row], table['Image'][row])
 
         expnum = (table['Image'][row]).strip('{}'.format(imagetype))
@@ -151,29 +144,19 @@ def find_objects_by_phot(family_name, aperture, thresh, imagetype):
 
         else:
             postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(table['Object'][row], table['Image'][row],
-                                                                     table['RA'][row], table['DEC'][row])
+                                                                     table['RA'][row], table['Dec'][row])
             # TEMPORARY: for comet search
-            '''
-            if not storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)):
-                print '-- Cutout not found, creating new cutout'
-                get_stamps.cutout(username, password, family_name, table['Object'][row], table['Image'][row],
-                                  table['RA'][row], table['DEC'][row], _RADIUS)
-            if not storage.exists('{}/{}'.format(vos_dir, postage_stamp_filename)):
-                with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_VOS_ERR), 'a') as outfile:
-                    outfile.write('{} {}\n'.format(table['Object'][row], table['Image'][row]))
-            else:
-            '''
             success = False
             attempts = 0
             while (success is False) and (attempts < 3):
                 success = iterate_thru_images(family_name, str(table['Object'][row]), table['Image'][row], username,
-                                              password, aperture, thresh)
+                                              password, aperture, thresh, table['RA2'][row], table['DEC2'][row])
                 attempts += 1
                 if attempts == 3:
                     print ' >>>> Last attempt \n'
 
 
-def iterate_thru_images(family_name, object_name, expnum_p, username, password, ap, th):
+def iterate_thru_images(family_name, object_name, expnum_p, username, password, ap, th, p_ra, p_dec):
     """
     For a given family, object, and exposure number, get orbital information of the object in the image
     """
@@ -191,11 +174,9 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
 
                     print "-- Querying JPL Horizon's ephemeris"
                     # mag_list_jpl, r_sig = get_mag_rad(object_name, header)
-                    mag_list_jpl = [15.015, 15.0, 15.2]
+                    mag_list_jpl = [21.0, 21.2, 21.5]
                     r_sig = _ERR_ELL_RAD
                     # p_ra, p_dec, ra_dot, dec_dot = get_coords(str(object_name), header)
-                    p_ra = 68.15085
-                    p_dec = 51.233312
                     ra_dot = 0.001
                     dec_dot = 0.001
 
@@ -378,7 +359,7 @@ def append_table(objs, header, p_ra, p_dec):
 
     pvwcs = wcs.WCS(header)
     # TEMPORARY: for comet search
-    zeropt = 32  # header['PHOTZP']
+    zeropt = 16  # header['PHOTZP']
 
     table = pd.DataFrame({'x': objs['x'],
                           'y': objs['y'],
@@ -509,8 +490,8 @@ def iden_good_neighbours(family_name, object_name, transients, header, r_sig, p_
     # TEMPORARY: for comet search
     # p_f = 0.5 * ((ra_dot / 2) ** 2 + (dec_dot / 2) ** 2) ** 0.5 * (header['EXPTIME'] / (3600 * 0.184))
     # p_f_err = (_F_ERR / 100) * 0.5 * (abs(ra_dot) + abs(dec_dot)) * (header['EXPTIME'] / (3600 * 0.184))
-    p_f = 20
-    p_f_err = 3
+    p_f = 1.5
+    p_f_err = 2
     assert p_f_err != 0, 'Focal length calculated to be zero'
 
     if p_f > 10:
@@ -522,7 +503,7 @@ def iden_good_neighbours(family_name, object_name, transients, header, r_sig, p_
     i_list, found = find_neighbours(transients, r_sig, p_x, p_y)
     if not found:
         write_not_found(family_name, object_name, expnum, p_ra, p_dec, p_x, p_y, p_f, p_mag)
-        raise Exception
+        return
 
     # build a table of the candidate transients, check if meet elongation and magnitude conditions
     i_table = transients.iloc[i_list, :]  # row, column
@@ -530,7 +511,7 @@ def iden_good_neighbours(family_name, object_name, transients, header, r_sig, p_
     # check that SEP phot values make sense
     for i in i_list:
         if not (i_table['theta'][i] > - np.pi / 2) and (i_table['theta'][i] < np.pi / 2) and (
-                i_table['a'][i] < _A_MAX) and (i_table['b'][i] < _B_MAX):
+                    i_table['a'][i] < _A_MAX) and (i_table['b'][i] < _B_MAX):
             print 'PHOT measurement error: {} {} {}'.format(i_table['theta'][i], i_table['a'][i], i_table['b'][i])
             write_phot_meas_err(family_name, p_ra, p_dec, p_x, p_y, p_f, p_mag, i_table, i)
             return
@@ -712,15 +693,15 @@ def write_multp_id(object_name, expnum, object_data, family_name, p_ra, p_dec, p
 
 def write_not_found(family_name, object_name, expnum, p_ra, p_dec, p_x, p_y, p_f, p_mag):
     with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_NOT_FOUND), 'a') as infile:
-            infile.write('{} {} {} {} {} {} {} {}\n'.format(object_name, expnum, p_ra, p_dec, p_x, p_y, p_f, p_mag))
+        infile.write('{} {} {} {} {} {} {} {}\n'.format(object_name, expnum, p_ra, p_dec, p_x, p_y, p_f, p_mag))
 
 
 def write_phot_meas_err(family_name, p_ra, p_dec, p_x, p_y, p_f, p_mag, i_table, row):
     with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_PHOT_MEAS_ERR), 'a') as outfile:
-                outfile.write('{} {} {} {} {} {} {} {}\ncandidates:\n{} {} {} {} {} {}'.format(
-                    i_table['object_name'][row], i_table['expnum'][row], p_ra, p_dec, p_x, p_y, p_f, p_mag,
-                    i_table['ra'][row], i_table['dec'][row], i_table['x'][row], i_table['y'][row],
-                    i_table['f'][row], i_table['mag'][row]))
+        outfile.write('{} {} {} {} {} {} {} {}\ncandidates:\n{} {} {} {} {} {}'.format(
+            i_table['object_name'][row], i_table['expnum'][row], p_ra, p_dec, p_x, p_y, p_f, p_mag,
+            i_table['ra'][row], i_table['dec'][row], i_table['x'][row], i_table['y'][row],
+            i_table['f'][row], i_table['mag'][row]))
 
 
 def cut_centered_stamp(family_name, object_name, expnum_p, object_data, r_old, username, password):
@@ -730,6 +711,7 @@ def cut_centered_stamp(family_name, object_name, expnum_p, object_data, r_old, u
         print '-- Cutting recentered stamp'
         get_stamps.centered_stamp(object_name, expnum_p, r_old, object_data[0][5], object_data[0][6], username,
                                   password, family_name)
+
 
 if __name__ == '__main__':
     main()
