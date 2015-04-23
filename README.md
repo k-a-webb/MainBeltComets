@@ -9,8 +9,9 @@ In 'get_images.py' a SSOIS query is made for each object in the asteroid list as
 
 In 'get_stamps.py' the list of exposures is used to cut postage stamps of the asteroid from each exposure and upload them to VOSpace in the folder vos:kawebb/postage_stamps/all if the asteroid has a family designation or vos:kawebb/postage_stamps/none if it does not. This organization was chosen arbitrarily.
 
-In 'sep_phot.py' the postage_stamps are run through photometry software (SEP) and the precise asteroid location is determined from its position relative to the predicted location, degree of trailing, and magnitude. Information regarding the photometry and coordinates if output as familyname_all_output.txt and similar but less information is output as familyname_output.txt. The reason two files are output is that not all the information in the first file is relevant for continuing along in the study, but may be useful for ensuring the pipeline is working properly. The output can be found in the folder getImages/phot_output.
-To run this for a list of asteroids with output in the format as written by 'get_images.py', the script 'do_all.py' can be used. Running 'sep_phot.py' outright is typically best for looking at a particular asteroid and exposure. 
+In 'sep_phot.py' the postage_stamps are run through photometry software (SEP) and the precise asteroid location is determined from its position relative to the predicted location, degree of trailing, and magnitude. Information regarding the photometry and coordinates if output as familyname_output.txt in the folder getImages/phot_output.
+The cataloge of stars 'Eall.photcat' etc. can be found at http://www.canfar.phys.uvic.ca/vosui/#/OSSOS/photometric_reference
+The list of bad exposures 'tkBAD.txt' can be found at http://www.canfar.phys.uvic.ca/vosui/#sgwyn
 
 In 'mbc_detection.py' a PSF is generated from the asteroid stamp and compared to a stellar model PSF generated from the OSSOS MOP. As of yet this comparison is not functional.
 
