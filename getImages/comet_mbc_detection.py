@@ -43,7 +43,7 @@ ccd_num = 18
 
 '''
 headers in {}_all_output:
-object expnum p_x p_y x y x_mid y_mid x-xmid y-ymid a b a2 b2 pf f f2 consist_f consist_mag
+object expnum p_ra p_dec ra dec p_x p_y x y x_mid y_mid xmin xmax ymin ymax a b theta p_f f consistent_f p_mag mag flux consistent_mag date_time
 '''
 
 
@@ -66,14 +66,16 @@ def main():
 
     args = parser.parse_args()
 
-    # detect_mbc(args.family, args.object, args.expnum)
+    if args.object is None:
+        table = pd.read_table('{}/{}/{}_{}'.format(_PHOT_DIR, args.family, args.family, _INPUT_FILE), sep=' ',
+                              dtype={'object': object}, index_col=False)
 
-    table = pd.read_table('{}/{}/{}_{}'.format(_PHOT_DIR, args.family, args.family, _INPUT_FILE), sep=' ',
-                          dtype={'object': object}, index_col=False)
+        for i in range(len(table)):
+            detect_mbc(args.family, table['object'][i], table['expnum'][i], i)
+            print '\n'
 
-    for i in range(len(table)):
-        detect_mbc(args.family, table['object'][i], table['expnum'][i], i)
-        print '\n'
+    else:
+        detect_mbc(args.family, args.object, args.expnum)
 
 
 def detect_mbc(family_name, object_name, expnum, i):
@@ -120,10 +122,11 @@ def detect_mbc(family_name, object_name, expnum, i):
     # get fwhm from OSSOS VOSpace file
     fwhm = storage.get_fwhm(expnum.strip('p'), ccd_num)
 
+    # get mean flux perpendicular to direction of motion of both star and asteroid
     ast_data = get_asteroid_data(asteroid_id, data, i, fwhm)
     star_data = get_star_data(expnum, header, asteroid_id, fits_file, data)
 
-    print '-- Comparing PSFs'
+    # compare profiles to detect deviation
     detection, sig = compare_psf(star_data, ast_data, fwhm)
     if detection:
         print '>> Detect possible comae <<'
@@ -236,12 +239,12 @@ def get_asteroid_data(object_data, data, i, fwhm):
 
     x_range = range(int(cx - a - ell_buffer + 1), int(cx + a + ell_buffer - 1))
 
-    if x_range[0] < x_min and x_range[-1] > x_max:
-        x_range = range(x_min, x_max)
-    elif x_range[0] < x_min:
-        x_range = range(x_min, int(cx + a + ell_buffer - 1))
-    elif x_range[-1] > x_max:
-        x_range = range(int(cx - a - ell_buffer + 1), x_max)
+    if x_range[0] < 0 and x_range[-1] > data_rot.shape[1]:
+        x_range = range(0, data_rot.shape[1])
+    elif x_range[0] < 0:
+        x_range = range(0, int(cx + a + ell_buffer - 1))
+    elif x_range[-1] > data_rot.shape[1]:
+        x_range = range(int(cx - a - ell_buffer + 1), data_rot.shape[1])
 
     for x in x_range:
         y1 = int(cy - math.sqrt((a + ell_buffer) ** 2 - (x - cx) ** 2))
@@ -295,6 +298,8 @@ def compare_psf(data_str, data_ast, fwhm):
     >> changed data to not normalized nor baseline subtracted
     """
 
+    print '-- Comparing PSFs'
+
     x_ast = range(len(data_ast))
     x_str = range(len(data_str))
     p_str = [np.amax(data_str), float(len(x_str)) / 2, fwhm, 0.]
@@ -326,7 +331,6 @@ def compare_psf(data_str, data_ast, fwhm):
     ratio = (abs(r) - np.ma.mean(np.sort(r)[2:-3])) / r_sig2
     print ratio
     print np.ma.mean(ratio)
-
 
     # normalize the star PSF to the height of the asteroid PSF
     ast_baseline = np.mean(np.sort(data_ast)[:8])
@@ -372,7 +376,7 @@ def compare_psf(data_str, data_ast, fwhm):
 
 def write_to_file(asteroid_id, family_name, sig):
     with open('{}/{}/abv_{}_sig.txt'.format(_PHOT_DIR, family_name, sig), 'a') as outfile:
-        outfile.write('{} {}'.format(asteroid_id['object'].values[0], asteroid_id['expnum'].values[0]))
+        outfile.write('{} {} \n'.format(asteroid_id['object'].values[0], asteroid_id['expnum'].values[0]))
 
 
 if __name__ == '__main__':
