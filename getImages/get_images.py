@@ -6,7 +6,7 @@ import argparse
 import sys
 import time
 import find_family
-from ossos_scripte.ssois_query import Query
+from ossos_scripts.ssois_query import Query
 
 _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
 _FAMILY_LISTS = '{}/family_lists'.format(_DIR_PATH_BASE)
@@ -79,7 +79,7 @@ def get_image_info(familyname, filtertype='r', imagetype='p'):
         outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(
             "Object", "Image", "Exp_time", "RA", "DEC", "time", "filter"))
 
-    print "----- \n Searching for images of objects in family {}".format(familyname)
+    print "----- Searching for images of objects in family {}".format(familyname)
 
     image_list = []
     expnum_list = []
@@ -102,11 +102,9 @@ def get_image_info(familyname, filtertype='r', imagetype='p'):
                 ra_list.append(line['Object_RA'])
                 dec_list.append(line['Object_Dec'])
                 try:
-                    outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(object_name,
-                                                                        line['Image'], line['Exptime'],
-                                                                        line['Object_RA'], line['Object_Dec'],
-                                                                        Time(line['MJD'], format='mjd', scale='utc'),
-                                                                        line['Filter']))
+                    outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(
+                        object_name, line['Image'], line['Exptime'], line['Object_RA'], line['Object_Dec'],
+                        Time(line['MJD'], format='mjd', scale='utc'), line['Filter']))
                 except Exception, e:
                     print "Error writing to outfile: {}".format(e)
 
@@ -135,7 +133,7 @@ def parse_ssois_return(ssois_return, object_name, imagetype, camera_filter='r.MP
         # note: 'Telescope_Insturment' is a typo in SSOIS's return format
         exp_times = [287, 387, 500]
         if (row['Telescope_Insturment'] == telescope_instrument) and (row['Filter'] == camera_filter) and \
-                int(row['Exptime']) in exp_times and (row['Image'].endswith('{}'.format(imagetype))):
+                        int(row['Exptime']) in exp_times and (row['Image'].endswith('{}'.format(imagetype))):
             if not str(row['Image_target']).startswith('WP'):
                 good_table += 1
                 ret_table.append(row)

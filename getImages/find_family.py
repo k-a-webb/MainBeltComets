@@ -45,20 +45,18 @@ def main():
 
     args = parser.parse_args()
 
-    # find_family_members(args.family, args.output)
-    mba_list = find_by_status(args.status)
-    name_list = parse_for_all(mba_list, args.status, fromfile=True)
+    # find_family_members(args.family)
+    # mba_list = find_by_status(args.status)
+    # name_list = parse_for_all(mba_list, args.status, fromfile=True)
+    find_by_status(args.status)
 
 
-def find_family_members(familyname, output=None):
+def find_family_members(familyname):
     """
     Queries the AstDys database for members of specified family, family name is name of largest member
     """
 
-    if output is None:
-        output = '{}/{}_family.txt'.format(_OUTPUT_DIR, familyname)
-    else:
-        output = '{}/{}_family.txt'.format(_OUTPUT_DIR, familyname)
+    output = '{}/{}_family.txt'.format(_OUTPUT_DIR, familyname)
 
     r = requests.get(_BASE_URL_NUMB_MEM)
     r.raise_for_status()
@@ -128,6 +126,8 @@ def find_by_status(status=4):
     i.e. it searches either for members of families (3) or not (0)
     """
 
+    print '--- Parsing AstDys for asteroids of status {}'.format(status)
+
     output = '{}/status_{}.txt'.format(_OUTPUT_DIR, status)
 
     # create duplicate output to satisfy naming conventions
@@ -195,7 +195,7 @@ def get_all_astrometry():
     table_arrays = {'objectname': tableobject_list, 'semimajor_axis': a_list, 'eccentricity': e_list,
                     'inclination': i_list}
     all_objects_table = pd.DataFrame(data=table_arrays)
-    all_objects_table.to_csv('{}/astdys_table.txt'.format(_OUTPUT_DIR), sep='\t', encoding='utf-8')
+    all_objects_table.to_csv('{}/astdys_table.txt'.format(_OUTPUT_DIR), sep=' ', encoding='utf-8')
     # print all_objects_table
 
     return all_objects_table
@@ -207,7 +207,8 @@ def parse_for_all(mba_list, status, fromfile=True):
     """
 
     if fromfile is True:
-        all_objects_table = pd.read_table('{}/astdys_table.txt'.format(_OUTPUT_DIR), sep='\t', dtype={'objectname': object})
+        all_objects_table = pd.read_table('{}/astdys_table.txt'.format(_OUTPUT_DIR), sep='\t',
+                                          dtype={'objectname': object})
     else:
         all_objects_table = get_all_astrometry()
 

@@ -48,7 +48,7 @@ _BUFFER2 = 30.  # the size of the cutout of the asteroid before rotation.
 
 _OUTPUT_NO_MKPSF = 'no_image_psf.txt'.format(_DIR_PATH_BASE)
 _OUTPUT_TOO_BRIGHT = 'too_bright.txt'.format(_DIR_PATH_BASE)
-_INPUT_FILE = 'output_retry.txt'
+_INPUT_FILE = 'output.txt'
 
 '''
 headers in {}_output:
@@ -350,13 +350,13 @@ def compare_psf(data_str, data_ast, fwhm):
     data_str_norm = np.multiply(data_str_at_astpts,
                                 np.amax(data_ast - ast_baseline) / np.amax(data_str_at_astpts - str_baseline))
     data_str_like_ast = data_str_norm + ast_baseline - np.mean(np.sort(data_str_norm)[:8])
-
+    '''
     with sns.axes_style('ticks'):
         plt.plot(x_ast, data_ast, label='Ast PSF', ls='--')
         plt.plot(x_ast, data_str_like_ast, label='Interp star PSF', ls='-.')
         plt.legend()
         plt.show()
-
+    '''
     if len(ratio[np.greater_equal(ratio, 5)]) > 2:
         return True, 5
     elif len(ratio[np.greater_equal(ratio, 4)]) > 2:

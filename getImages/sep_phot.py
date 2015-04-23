@@ -553,7 +553,7 @@ def iden_good_neighbours(family_name, object_name, transients, header, r_sig, p_
         print '  Nearest neighbours:'
         print i_table
         write_no_cond_met(object_name, expnum, i_table, family_name, p_x, p_y, p_ra, p_dec, p_f, p_mag)
-        return
+        return i_table
 
 
 def add_to_object_table(table, first, second):

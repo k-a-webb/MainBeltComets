@@ -56,7 +56,7 @@ def main():
                         help="The input .txt files of astrometry/photometry measurements.")
     parser.add_argument("--radius", '-r',
                         action='store',
-                        default=0.02,
+                        default=0.01,
                         help='Radius (degree) of circle of cutout postage stamp.')
 
     args = parser.parse_args()
@@ -198,7 +198,6 @@ def cutout(username, password, family_name, object_name, image, ra, dec, radius,
         del small_fobj
     except requests.HTTPError, e:
         print 'Connection Failed, {}'.format(e)
-        write_to_file(object_name, image)
         return
 
     this_cutout2 = "CIRCLE ICRS {} {} {}".format(ra, dec, radius)
