@@ -90,7 +90,11 @@ def main():
     parser.add_argument("--object", '-o',
                         action='store',
                         default=None,
-                        help='The object to be identified.')  # Not used currently
+                        help='The object to be identified.')
+    parser.add_argument("--expnum", '-x',
+                        action='store',
+                        default=None,
+                        help='The exposure that the object is in.')
     parser.add_argument('--type',
                         default='p',
                         choices=['o', 'p', 's'],
@@ -98,7 +102,26 @@ def main():
 
     args = parser.parse_args()
 
-    find_objects_by_phot(args.family, float(args.aperture), float(args.thresh), args.type)
+    if args.object is None:
+        find_objects_by_phot(args.family, float(args.aperture), float(args.thresh), args.type)
+    else:
+        assert args.expnum.endswith('p') or args.expnum.endswith('o'), "Must include 'p' or 'o' in expnum"
+        image_list_path = '{}/{}_{}'.format(_IMAGE_LISTS, args.family, _INPUT_FILE)
+        table = pd.read_table(image_list_path, sep='\t', dtype={'Object': object, 'Image': object}, index_col=False)
+        lines = table[(table.Object == args.object) & (table.Image == args.expnum)]
+        print lines
+        username = raw_input("CADC username: ")
+        password = getpass.getpass("CADC password: ")
+
+        postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(args.object, args.expnum, float(lines.RA.values[0]),
+                                                                 float(lines.DEC.values[0]))
+        if not storage.exists('{}/all/{}'.format(_VOS_DIR, postage_stamp_filename)):
+            print '-- Cutout not found, creating new cutout'
+            get_stamps.cutout(username, password, args.family, args.object, args.expnum, lines.RA.values[0],
+                              lines.DEC.values[0], _RADIUS)
+        assert storage.exists('{}/all/{}'.format(_VOS_DIR, postage_stamp_filename)), 'Error: Cutout not found'
+        iterate_thru_images(args.family, args.object, args.expnum, username, password, float(args.aperture),
+                            float(args.thresh))
 
 
 def find_objects_by_phot(family_name, aperture, thresh, imagetype):
@@ -131,14 +154,7 @@ def find_objects_by_phot(family_name, aperture, thresh, imagetype):
             tkbad_list.append(line.split(' ')[0])
 
     # for each image of each object, make cutout and go to sep_phot
-    try:
-        table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0,
-                              names=['Object', 'Image', 'RA', 'DEC'],
-                              sep=' ', dtype={'Object': object, 'Image': object})
-    except pd.parser.CParserError:
-        table = pd.read_table(image_list_path, usecols=[0, 1, 3, 4], header=0,
-                              names=['Object', 'Image', 'RA', 'DEC'],
-                              sep='\t', dtype={'Object': object, 'Image': object})
+    table = pd.read_table(image_list_path, sep='\t', dtype={'Object': object}, index_col=False)
 
     for row in range(len(table)):
         print "\n {} --- Searching for asteroid {} in image {} ".format(row, table['Object'][row], table['Image'][row])
@@ -189,7 +205,7 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
         if (len(objs_met_cond) != 1) or (len(objs_met_cond) is None):
             return True
 
-        involved = check_involvement(good_neighbours, catalogue, r_err, header)
+        involved = check_involvement(objs_met_cond, catalogue, r_err, header)
         if involved:
             write_to_error_file(object_name, expnum_p, _OUTPUT_INVOLVED, family_name)
             return True
@@ -197,11 +213,11 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
         write_to_file(family_name, object_name, expnum_p, objs_met_cond, header, p_ra, p_dec, p_f,
                       p_mag)
         print '-- Cutting out recentered postage stamp'
-        # cut_centered_stamp(familyname, objectname, expnum_p, good_neighbours, _RADIUS, username, password)
+        # cut_centered_stamp(familyname, objectname, expnum_p, objs_met_cond, _RADIUS, username, password)
         return objs_met_cond
 
     except Exception, e:
-        print 'ERROR: {}'.format(e)
+        print 'Error iterating through images: {}'.format(e)
         if 'NoneType' in e.message:
             return False
         else:
@@ -251,7 +267,7 @@ def get_fits_data(object_name, expnum_p, family_name, ap, th):
         print "WARNING: Image does not exist for {} {}".format(object_name, expnum_p)
         raise
     except Exception, e:
-        print 'ERROR: {}'.format(e)
+        print 'Error retrieving fits data: {}'.format(e)
         write_to_error_file(object_name, expnum_p, out_filename=_OUTPUT_PHOT_ERR, family_name=family_name)
         raise
 
@@ -492,19 +508,20 @@ def iden_good_neighbours(family_name, object_name, transients, header, r_sig, p_
     i_list, found = find_neighbours(transients, r_sig, p_x, p_y)
     if not found:
         write_not_found(family_name, object_name, expnum, p_ra, p_dec, p_x, p_y, p_f, p_mag)
-        raise Exception
+        return
 
     # build a table of the candidate transients, check if meet elongation and magnitude conditions
     i_table = transients.iloc[i_list, :]  # row, column
 
     # check that SEP phot values make sense
+    '''
     for i in i_list:
-        if not (i_table['theta'][i] > - np.pi / 2) and (i_table['theta'][i] < np.pi / 2) and (
-                i_table['a'][i] < _A_MAX) and (i_table['b'][i] < _B_MAX):
+        if not (i_table['theta'][i] > - np.pi / 2) or not (i_table['theta'][i] < np.pi / 2) or not \
+                (i_table['a'][i] < _A_MAX) or not (i_table['b'][i] < _B_MAX):
             print 'PHOT measurement error: {} {} {}'.format(i_table['theta'][i], i_table['a'][i], i_table['b'][i])
             write_phot_meas_err(family_name, p_ra, p_dec, p_x, p_y, p_f, p_mag, i_table, i)
             return
-
+    '''
     both_cond = i_table.query('({} < f < {}) & ({} < mag < {})'.format(p_f - p_f_err, p_f + p_f_err,
                                                                        p_mag - mag_err, p_mag + mag_err))
     only_f_cond = i_table.query('{} < f < {}'.format(p_f - p_f_err, p_f + p_f_err))
@@ -681,15 +698,15 @@ def write_multp_id(object_name, expnum, object_data, family_name, p_ra, p_dec, p
 
 def write_not_found(family_name, object_name, expnum, p_ra, p_dec, p_x, p_y, p_f, p_mag):
     with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_NOT_FOUND), 'a') as infile:
-            infile.write('{} {} {} {} {} {} {} {}\n'.format(object_name, expnum, p_ra, p_dec, p_x, p_y, p_f, p_mag))
+        infile.write('{} {} {} {} {} {} {} {}\n'.format(object_name, expnum, p_ra, p_dec, p_x, p_y, p_f, p_mag))
 
 
 def write_phot_meas_err(family_name, p_ra, p_dec, p_x, p_y, p_f, p_mag, i_table, row):
     with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_PHOT_MEAS_ERR), 'a') as outfile:
-                outfile.write('{} {} {} {} {} {} {} {}\ncandidates:\n{} {} {} {} {} {}'.format(
-                    i_table['object_name'][row], i_table['expnum'][row], p_ra, p_dec, p_x, p_y, p_f, p_mag,
-                    i_table['ra'][row], i_table['dec'][row], i_table['x'][row], i_table['y'][row],
-                    i_table['f'][row], i_table['mag'][row]))
+        outfile.write('{} {} {} {} {} {} {} {}\ncandidates:\n{} {} {} {} {} {}'.format(
+            i_table['object_name'][row], i_table['expnum'][row], p_ra, p_dec, p_x, p_y, p_f, p_mag,
+            i_table['ra'][row], i_table['dec'][row], i_table['x'][row], i_table['y'][row],
+            i_table['f'][row], i_table['mag'][row]))
 
 
 def cut_centered_stamp(family_name, object_name, expnum_p, object_data, r_old, username, password):
@@ -699,6 +716,7 @@ def cut_centered_stamp(family_name, object_name, expnum_p, object_data, r_old, u
         print '-- Cutting recentered stamp'
         get_stamps.centered_stamp(object_name, expnum_p, r_old, object_data[0][5], object_data[0][6], username,
                                   password, family_name)
+
 
 if __name__ == '__main__':
     main()

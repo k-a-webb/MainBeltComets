@@ -20,7 +20,7 @@ class ParamDictBuilder(object):
                  verbose=False,
                  search_start_date=Time('2013-01-01', scale='utc'),
                  search_end_date=Time('2017-01-01', scale='utc'),
-                 search_method='bynameCADC',
+                 search_method='bynameMPC',
                  error_units='arcseconds',
                  resolve_extension=True,
                  resolve_position=True):
