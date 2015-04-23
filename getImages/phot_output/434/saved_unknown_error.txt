@@ -1,0 +1,14 @@
+39665 1631610p # phot param error, Error retrieving fits data: Empty or corrupt FITS file
+111753 1774672p # no object found, No nearest neighbours were found within 45.0
+133911 1691927p # Error iterating through images: "Keyword 'PHOTZP' not found."
+133911 1692362p # Error iterating through images: "Keyword 'PHOTZP' not found."
+159176 1667560p # no object found
+204248 1672749p # phot param error, Error retrieving fits data: Empty or corrupt FITS file
+204248 1672750p # phot param error, Error retrieving fits data: Empty or corrupt FITS file
+204248 1672754p # phot param error, Error retrieving fits data: Empty or corrupt FITS file
+204248 1672758p # no object found
+204248 1672759p # no object found
+204248 1672780p # no object found
+204248 1672810p # no object found
+259970 1667904p # phot param error, Error retrieving fits data: Empty or corrupt FITS file
+283374 1778891p # no object found

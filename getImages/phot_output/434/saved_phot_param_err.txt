@@ -1,0 +1,5 @@
+39665	1631610p # Error retrieving fits data: Empty or corrupt FITS file
+204248	1672749p # Error retrieving fits data: Empty or corrupt FITS file
+204248	1672750p # Error retrieving fits data: Empty or corrupt FITS file
+204248	1672754p # Error retrieving fits data: Empty or corrupt FITS file
+259970	1667904p # Error retrieving fits data: Empty or corrupt FITS file
