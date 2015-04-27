@@ -13,6 +13,7 @@ from scipy.ndimage.interpolation import rotate
 import math
 import seaborn as sns
 import matplotlib.pyplot as plt
+import matplotlib
 from scipy.optimize import curve_fit
 import sys
 
@@ -50,6 +51,8 @@ _OUTPUT_NO_MKPSF = 'no_image_psf.txt'.format(_DIR_PATH_BASE)
 _OUTPUT_TOO_BRIGHT = 'too_bright.txt'.format(_DIR_PATH_BASE)
 _INPUT_FILE = 'output.txt'
 
+SPINE_COLOR = 'gray'
+
 '''
 headers in {}_output:
 object expnum p_ra p_dec ra dec p_x p_y x y x_mid y_mid xmin xmax ymin ymax a b theta p_f f consistent_f p_mag mag flux consistent_mag date_time
@@ -76,9 +79,12 @@ def main():
     args = parser.parse_args()
 
     if args.object is None:
-        table = pd.read_table('{}/{}/{}_{}'.format(_PHOT_DIR, args.family, args.family, _INPUT_FILE), sep=' ',
-                              dtype={'object': object}, index_col=False)
-        for i in range(2, len(table)):
+        table = pd.read_table('{}/{}/{}_{}'.format(_PHOT_DIR, args.family, args.family, _INPUT_FILE),
+                              dtype={'object': object}, index_col=False, header=None, sep=' ',
+                              names=['object', 'expnum', 'p_ra', 'p_dec', 'ra', 'dec', 'p_x', 'p_y', 'x', 'y', 'x_mid',
+                                     'y_mid', 'xmin', 'xmax', 'ymin', 'ymax', 'a', 'b', 'theta', 'p_f', 'f',
+                                     'consistent_f', 'p_mag', 'mag', 'flux', 'consistent_mag', 'date_time'])
+        for i in range(8, len(table)):
             detect_mbc(args.family, table['object'][i], table['expnum'][i], i)
             print '\n'
 
@@ -92,9 +98,12 @@ def detect_mbc(family_name, object_name, expnum, i):
     """
 
     # read in asteroid identification values from the photometry output
-    phot_output_table = pd.read_table('{}/{}/{}_{}'.format(_PHOT_DIR, family_name, family_name, _INPUT_FILE),
-                                      sep=' ', dtype={'object': object}, index_col=False)
-    asteroid_id = phot_output_table.query(
+    phot_table = pd.read_table('{}/{}/{}_{}'.format(_PHOT_DIR, family_name, family_name, _INPUT_FILE),
+                               dtype={'object': object, 'theta': float}, index_col=False, header=None, sep=' ',
+                               names=['object', 'expnum', 'p_ra', 'p_dec', 'ra', 'dec', 'p_x', 'p_y', 'x', 'y', 'x_mid',
+                                      'y_mid', 'xmin', 'xmax', 'ymin', 'ymax', 'a', 'b', 'theta', 'p_f', 'f',
+                                      'consistent_f', 'p_mag', 'mag', 'flux', 'consistent_mag', 'date_time'])
+    asteroid_id = phot_table.query(
         'object == "{}" & expnum == "{}"'.format(object_name, expnum))
     print asteroid_id
     assert len(asteroid_id) == 1, 'Multiple object identified'
@@ -111,8 +120,8 @@ def detect_mbc(family_name, object_name, expnum, i):
     '''
     target = header[_TARGET]
     if 'BH' not in target:
-        print '-- NOT in H Block'
-        return
+    print '-- NOT in H Block'
+    return
     '''
 
     # reject any object too bright that will definetly be saturated
@@ -125,7 +134,7 @@ def detect_mbc(family_name, object_name, expnum, i):
     # get fwhm from OSSOS VOSpace file
     fwhm = storage.get_fwhm(expnum.strip('p'), header[_CCD].split('d')[1])
 
-    ast_data = get_asteroid_data(asteroid_id, data, i, fwhm)
+    ast_data = get_asteroid_data(asteroid_id, data, fwhm, family_name)
     star_data = get_star_data(expnum, header, asteroid_id, data)
 
     print '-- Comparing PSFs'
@@ -213,7 +222,7 @@ def get_star_data(expnum, header, object_data, exp_data):
     return data_mean[np.nonzero(np.ma.fix_invalid(data_mean, fill_value=0))[0]]
 
 
-def get_asteroid_data(object_data, data, i, fwhm):
+def get_asteroid_data(object_data, data, fwhm, family_name):
     """
     Calculate psf of asteroid, taking into acount trailing effect
     Cut a square around the polygon of the object, remove saturated rows, rotate so that the ellipse is parallel to the
@@ -241,8 +250,6 @@ def get_asteroid_data(object_data, data, i, fwhm):
     np.copyto(data_obj, data[y_min:y_max, x_min:x_max])
 
     # rotate the data about the angle of elongation, semi major axis is along x as reading out rows (not columns)
-    assert (math.degrees(object_data['theta'].values[0]) > -90) and (
-        math.degrees(object_data['theta'].values[0]) < 90)
     data_rot = rotate(data_obj, math.degrees(object_data['theta'].values[0]))
 
     # cut out a circular aperture around the object
@@ -275,7 +282,7 @@ def get_asteroid_data(object_data, data, i, fwhm):
 
     hdu = fits.PrimaryHDU()
     hdu.data = np.multiply(data_rot, mask2)
-    hdu.writeto('cutout_{}.fits'.format(i), clobber=True)
+    hdu.writeto('psf_output/{}/cutout_{}_{}.fits'.format(family_name, object_data['object'].values[0], object_data['expnum'].values[0]), clobber=True)
 
     data_mean = np.ma.mean(data_cutout, axis=1)
 
@@ -338,8 +345,9 @@ def compare_psf(data_str, data_ast, fwhm):
     r_sig2 = r * np.sqrt(
         np.square(np.divide(data_ast_sig, data_ast)) + np.square(np.divide(data_str_sig, data_str_at_astpts)))
 
-    # print r.compressed()
+    print r.compressed()
     # print np.ma.mean(r), np.ma.mean(np.sort(r)[2:-3])
+    print r_sig, r_sig2
     print '>> (r - r_mean) / r_sig'
     ratio = (abs(r) - np.ma.mean(np.sort(r)[2:-3])) / r_sig2
     print ratio
@@ -351,12 +359,26 @@ def compare_psf(data_str, data_ast, fwhm):
                                 np.amax(data_ast - ast_baseline) / np.amax(data_str_at_astpts - str_baseline))
     data_str_like_ast = data_str_norm + ast_baseline - np.mean(np.sort(data_str_norm)[:8])
     '''
+    df = pd.DataFrame({'Asteroid': data_ast, 'Star': data_str_like_ast})
     with sns.axes_style('ticks'):
-        plt.plot(x_ast, data_ast, label='Ast PSF', ls='--')
-        plt.plot(x_ast, data_str_like_ast, label='Interp star PSF', ls='-.')
-        plt.legend()
+        latexify()
+        ax = df.plot(style='k--')
+        ax.set_xlabel("Pixels")
+        ax.set_ylabel("Mean Flux")
+        # plt.tight_layout()
+        # plt.savefig("../files/image1.pdf")
         plt.show()
     '''
+
+    with sns.axes_style('ticks'):
+        latexify()
+        plt.plot(x_ast, data_ast, label='Asteroid', ls='-')
+        plt.plot(x_ast, data_str_like_ast, label='Stellar Model', ls=':')
+        plt.xlabel('Pixels')
+        plt.ylabel('Mean Flux')
+        plt.legend()
+        plt.show()
+
     if len(ratio[np.greater_equal(ratio, 5)]) > 2:
         return True, 5
     elif len(ratio[np.greater_equal(ratio, 4)]) > 2:
@@ -378,7 +400,7 @@ def write_no_mkpsf(family_name, expnum_ccd):
         for line in outfile:
             contents.append(line.strip('\n'))
     if expnum_ccd not in contents:
-        with open(_OUTPUT_NO_MKPSF, 'a') as outfile:
+        with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_NO_MKPSF), 'a') as outfile:
             outfile.write('{}\n'.format(expnum_ccd))
 
 
@@ -393,6 +415,70 @@ def write_too_bright(family_name, asteroid_id):
             outfile.write(
                 '{} {} {}\n'.format(asteroid_id['object'].values[0], asteroid_id['expnum'].values[0],
                                     asteroid_id['mag'].values[0]))
+
+
+def latexify(fig_width=None, fig_height=None, columns=1):
+    """Set up matplotlib's RC params for LaTeX plotting.
+    Call this before plotting a figure.
+
+    Parameters
+    ----------
+    fig_width : float, optional, inches
+    fig_height : float,  optional, inches
+    columns : {1, 2}
+    """
+
+    # code adapted from http://www.scipy.org/Cookbook/Matplotlib/LaTeX_Examples
+
+    # Width and max height in inches for IEEE journals taken from
+    # computer.org/cms/Computer.org/Journal%20templates/transactions_art_guide.pdf
+
+    assert (columns in [1, 2])
+
+    if fig_width is None:
+        fig_width = 5 if columns == 1 else 6.9  # width in inches
+
+    if fig_height is None:
+        golden_mean = (math.sqrt(5) - 1.0) / 2.0  # Aesthetic ratio
+        fig_height = fig_width * golden_mean  # height in inches
+
+    MAX_HEIGHT_INCHES = 8.0
+    if fig_height > MAX_HEIGHT_INCHES:
+        print("WARNING: fig_height too large:" + fig_height +
+              "so will reduce to" + MAX_HEIGHT_INCHES + "inches.")
+        fig_height = MAX_HEIGHT_INCHES
+
+    params = {'backend': 'ps',
+              'text.latex.preamble': ['\usepackage{gensymb}'],
+              'axes.labelsize': 8,  # fontsize for x and y labels (was 10)
+              'axes.titlesize': 8,
+              'font.size': 10,  # was 10
+              'legend.fontsize': 8,  # was 10
+              'xtick.labelsize': 8,
+              'ytick.labelsize': 8,
+              'text.usetex': True,
+              'figure.figsize': [fig_width, fig_height],
+              'font.family': 'serif'
+              }
+
+    matplotlib.rcParams.update(params)
+
+
+def format_axes(ax):
+    for spine in ['top', 'right']:
+        ax.spines[spine].set_visible(False)
+
+    for spine in ['left', 'bottom']:
+        ax.spines[spine].set_color(SPINE_COLOR)
+        ax.spines[spine].set_linewidth(0.5)
+
+    ax.xaxis.set_ticks_position('bottom')
+    ax.yaxis.set_ticks_position('left')
+
+    for axis in [ax.xaxis, ax.yaxis]:
+        axis.set_tick_params(direction='out', color=SPINE_COLOR)
+
+    return ax
 
 
 if __name__ == '__main__':
