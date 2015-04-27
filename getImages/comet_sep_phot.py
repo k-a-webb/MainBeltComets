@@ -133,9 +133,9 @@ def find_objects_by_phot(family_name, aperture, thresh, imagetype):
             tkbad_list.append(line.split(' ')[0])
 
     # for each image of each object, make cutout and go to sep_phot
-    table = pd.read_table(image_list_path, sep=' ', dtype={'Object': object})
+    table = pd.read_table(image_list_path, sep='\t', dtype={'Object': object})
 
-    for row in range(0, 2):  # len(table)):
+    for row in range(11, len(table)):
         print "\n {} --- Searching for asteroid {} in image {} ".format(row, table['Object'][row], table['Image'][row])
 
         expnum = (table['Image'][row]).strip('{}'.format(imagetype))
@@ -144,13 +144,13 @@ def find_objects_by_phot(family_name, aperture, thresh, imagetype):
 
         else:
             postage_stamp_filename = "{}_{}_{:8f}_{:8f}.fits".format(table['Object'][row], table['Image'][row],
-                                                                     table['RA'][row], table['Dec'][row])
+                                                                     table['RA'][row], table['DEC'][row])
             # TEMPORARY: for comet search
             success = False
             attempts = 0
             while (success is False) and (attempts < 3):
                 success = iterate_thru_images(family_name, str(table['Object'][row]), table['Image'][row], username,
-                                              password, aperture, thresh, table['RA2'][row], table['DEC2'][row])
+                                              password, aperture, thresh, table['RA'][row], table['DEC'][row])
                 attempts += 1
                 if attempts == 3:
                     print ' >>>> Last attempt \n'
@@ -171,6 +171,12 @@ def iterate_thru_images(family_name, object_name, expnum_p, username, password, 
                     header = hdulist[0].header
 
                     septable = sep_phot(data, ap, th)
+
+                    image_list_path = '{}/{}_{}'.format(_IMAGE_LISTS, family_name, _INPUT_FILE)
+                    image_table = pd.read_table(image_list_path, sep='\t', dtype={'Object': object})
+                    image = image_table.query('Object == "comet" & Image == "{}"'.format(expnum_p))
+                    p_ra = image.RA.values[0]
+                    p_dec = image.DEC.values[0]
 
                     print "-- Querying JPL Horizon's ephemeris"
                     # mag_list_jpl, r_sig = get_mag_rad(object_name, header)
