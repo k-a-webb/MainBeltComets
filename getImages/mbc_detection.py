@@ -15,7 +15,10 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib
 from scipy.optimize import curve_fit
+from scipy.stats import ttest_ind
+from scipy.stats import ttest_1samp
 import sys
+from pyraf import iraf
 
 pd.set_option('display.max_columns', 30)
 client = vos.Client()
@@ -44,6 +47,10 @@ _XMID_HEADER = 'x_mid'
 _YMID_HEADER = 'y_mid'
 _THETA_HEADER = 'theta'
 
+_INPUT_HEADERS = [_OBJECT_HEADER, _EXPNUM_HEADER, 'p_ra', 'p_dec', 'ra', 'dec', 'p_x', 'p_y', 'x', 'y', _XMID_HEADER,
+                  _YMID_HEADER, _XMIN_HEADER, _XMAX_HEADER, _YMIN_HEADER, _YMAX_HEADER, 'a', 'b', _THETA_HEADER, 'p_f',
+                  'f', 'consistent_f', 'p_mag', _MAG_HEADER, 'flux', 'consistent_mag', 'date_time']
+
 _BUFFER1 = 2.5  # aperture of asteroid is this * the fwhm.
 _BUFFER2 = 30.  # the size of the cutout of the asteroid before rotation.
 
@@ -55,7 +62,8 @@ SPINE_COLOR = 'gray'
 
 '''
 headers in {}_output:
-object expnum p_ra p_dec ra dec p_x p_y x y x_mid y_mid xmin xmax ymin ymax a b theta p_f f consistent_f p_mag mag flux consistent_mag date_time
+object expnum p_ra p_dec ra dec p_x p_y x y x_mid y_mid xmin xmax ymin ymax a b theta p_f f consistent_f p_mag mag
+flux consistent_mag date_time
 '''
 
 
@@ -78,33 +86,32 @@ def main():
 
     args = parser.parse_args()
 
+    phot_table = pd.read_table('{}/{}/{}_{}'.format(_PHOT_DIR, args.family, args.family, _INPUT_FILE),
+                               dtype={'object': object}, index_col=False, header=None, sep=' ',
+                               names=_INPUT_HEADERS)
+
     if args.object is None:
-        table = pd.read_table('{}/{}/{}_{}'.format(_PHOT_DIR, args.family, args.family, _INPUT_FILE),
-                              dtype={'object': object}, index_col=False, header=None, sep=' ',
-                              names=['object', 'expnum', 'p_ra', 'p_dec', 'ra', 'dec', 'p_x', 'p_y', 'x', 'y', 'x_mid',
-                                     'y_mid', 'xmin', 'xmax', 'ymin', 'ymax', 'a', 'b', 'theta', 'p_f', 'f',
-                                     'consistent_f', 'p_mag', 'mag', 'flux', 'consistent_mag', 'date_time'])
-        for i in range(8, len(table)):
-            detect_mbc(args.family, table['object'][i], table['expnum'][i], i)
+        for i in range(3, len(phot_table)):
+            detect_mbc(args.family, phot_table['object'][i], phot_table['expnum'][i], phot_table)
             print '\n'
 
+    elif args.expnum is None:
+        object_table = phot_table.query('object == "{}"'.format(args.object))
+        object_table.reset_index(drop=True, inplace=True)
+        for i in range(len(object_table)):
+            detect_mbc(args.family, args.object, object_table['expnum'][i], object_table)
+            print '\n'
     else:
-        detect_mbc(args.family, args.object, args.expnum, 0)
+        detect_mbc(args.family, args.object, args.expnum, phot_table)
 
 
-def detect_mbc(family_name, object_name, expnum, i):
+def detect_mbc(family_name, object_name, expnum, phot_table):
     """
     Compare psf of asteroid with mean of stars to detect possible activity
     """
 
     # read in asteroid identification values from the photometry output
-    phot_table = pd.read_table('{}/{}/{}_{}'.format(_PHOT_DIR, family_name, family_name, _INPUT_FILE),
-                               dtype={'object': object, 'theta': float}, index_col=False, header=None, sep=' ',
-                               names=['object', 'expnum', 'p_ra', 'p_dec', 'ra', 'dec', 'p_x', 'p_y', 'x', 'y', 'x_mid',
-                                      'y_mid', 'xmin', 'xmax', 'ymin', 'ymax', 'a', 'b', 'theta', 'p_f', 'f',
-                                      'consistent_f', 'p_mag', 'mag', 'flux', 'consistent_mag', 'date_time'])
-    asteroid_id = phot_table.query(
-        'object == "{}" & expnum == "{}"'.format(object_name, expnum))
+    asteroid_id = phot_table.query('object == "{}" & expnum == "{}"'.format(object_name, expnum))
     print asteroid_id
     assert len(asteroid_id) == 1, 'Multiple object identified'
 
@@ -134,11 +141,13 @@ def detect_mbc(family_name, object_name, expnum, i):
     # get fwhm from OSSOS VOSpace file
     fwhm = storage.get_fwhm(expnum.strip('p'), header[_CCD].split('d')[1])
 
-    ast_data = get_asteroid_data(asteroid_id, data, fwhm, family_name)
-    star_data = get_star_data(expnum, header, asteroid_id, data)
+    ast_psf = get_asteroid_data(asteroid_id, data, fwhm, family_name)
+    star_psf = build_star_psf(ast_psf, expnum, header, asteroid_id, data, fwhm)
+
+    # comet_psf = build_comet_psf(star_psf)
 
     print '-- Comparing PSFs'
-    detection, sig = compare_psf(star_data, ast_data, fwhm)
+    detection, sig = compare_psf(star_psf, ast_psf)
     if detection:
         print '>> Detect possible comae <<'
         write_to_file(asteroid_id, family_name, sig)
@@ -172,56 +181,6 @@ def fits_data(object_name, expnum, family_name):
                 return header, data, fits_file
 
 
-def get_star_data(expnum, header, object_data, exp_data):
-    """
-    From ossos psf fitted image, calculate line profile
-    """
-    # calculate mean psf
-    uri = storage.get_uri(expnum.strip('p'), header[_CCD].split('d')[1])
-    ossos_psf = '{}.psf.fits'.format(uri.strip('.fits'))
-    local_psf = '{}{}.psf.fits'.format(expnum, header[_CCD].split('d')[1])
-    local_file_path = '{}/{}'.format(_STAMPS_DIR, local_psf)
-    storage.copy(ossos_psf, local_file_path)
-
-    # run seepsf on the mean psf image
-    from pyraf import iraf
-
-    # pvwcs = wcs.WCS(header)
-    # x, y = pvwcs.sky2xy(object_data['ra'].values, object_data['dec'].values)
-    x = object_data['x_mid'].values[0]
-    y = object_data['y_mid'].values[0]
-
-    iraf.set(uparm="./")
-    iraf.digiphot(_doprint=0)
-    iraf.apphot(_doprint=0)
-    iraf.daophot(_doprint=0)
-    iraf.seepsf(local_file_path, local_psf, xpsf=x, ypsf=y, magnitude=object_data['mag'].values[0])
-
-    with fits.open(local_psf) as hdulist:
-        data = hdulist[0].data
-
-    os.unlink(local_file_path)
-    os.unlink(local_psf)
-
-    th = math.degrees(object_data['theta'].values[0])
-    data_rot = rotate(data, th)
-    data_rot = np.ma.masked_where(data_rot == 0, data_rot)
-
-    # add in background value of exposure instead of subtracting it from the asteroid PSF
-    data2 = np.ones(exp_data.shape)
-    np.copyto(data2, exp_data)
-    try:
-        bkg = sep.Background(data2).globalback
-    except ValueError:
-        data3 = data2.byteswap(True).newbyteorder()
-        bkg = sep.Background(data3).globalback
-    data_rot += bkg
-
-    data_mean = np.ma.mean(data_rot, axis=1)
-
-    return data_mean[np.nonzero(np.ma.fix_invalid(data_mean, fill_value=0))[0]]
-
-
 def get_asteroid_data(object_data, data, fwhm, family_name):
     """
     Calculate psf of asteroid, taking into acount trailing effect
@@ -253,9 +212,8 @@ def get_asteroid_data(object_data, data, fwhm, family_name):
     data_rot = rotate(data_obj, math.degrees(object_data['theta'].values[0]))
 
     # cut out a circular aperture around the object
-    a = 0.5 * math.sqrt(
-        (object_data['xmax'].values[0] - object_data['xmin'].values[0]) ** 2 +
-        (object_data['ymax'].values[0] - object_data['ymin'].values[0]) ** 2)
+    a = 0.5 * math.sqrt((object_data['xmax'].values[0] - object_data['xmin'].values[0]) ** 2 +
+                        (object_data['ymax'].values[0] - object_data['ymin'].values[0]) ** 2)
     ell_buffer = _BUFFER1 * fwhm
     cy, cx = np.divide(data_rot.shape, 2)
 
@@ -279,46 +237,56 @@ def get_asteroid_data(object_data, data, fwhm, family_name):
             mask2[y][x] = 1
 
     data_cutout = np.ma.array(data_rot, mask=mask)
-
+    '''
     hdu = fits.PrimaryHDU()
     hdu.data = np.multiply(data_rot, mask2)
-    hdu.writeto('psf_output/{}/cutout_{}_{}.fits'.format(family_name, object_data['object'].values[0], object_data['expnum'].values[0]), clobber=True)
-
-    data_mean = np.ma.mean(data_cutout, axis=1)
+    hdu.writeto('psf_output/{}/cutout_{}_{}.fits'.format(family_name, object_data['object'].values[0],
+                                                         object_data['expnum'].values[0]), clobber=True)
+    '''
 
     # take the mean of all the values in each ROW
+    data_mean = np.ma.mean(data_cutout, axis=1)
     data_nonzero = data_mean[np.nonzero(np.ma.fix_invalid(data_mean, fill_value=0))[0]]
     assert len(data_nonzero) > 0, "All data in cutout is zero"
 
     return data_nonzero
 
 
-def get_bkg(data):
+def build_star_psf(data_ast, expnum, header, asteroid_id, exp_data, fwhm):
     """
-    Subtract the background from the data
+    Center the star data on the peak of the asteroid psf, and interpolate data points
     """
 
-    data2 = np.ones(data.shape)
-    np.copyto(data2, data)
-    try:
-        bkg = sep.Background(data2)  # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
-    except ValueError:
-        data3 = data2.byteswap(True).newbyteorder()
-        bkg = sep.Background(data3)  # , mask=mask, bw=64, bh=64, fw=3, fh=3) # optional parameters
-    bkg.subfrom(data2)
-    return data2
+    bkg, flux, fluxerr = sep_phot(exp_data, asteroid_id)
+
+    mag_max = -2.5 * np.log10(flux + fluxerr) + header[_ZMAG]
+    mag_min = -2.5 * np.log10(flux - fluxerr) + header[_ZMAG]
+    step = (mag_max - mag_min) / 2
+
+    # calculate mean psf
+    uri = storage.get_uri(expnum.strip('p'), header[_CCD].split('d')[1])
+    ossos_psf = '{}.psf.fits'.format(uri.strip('.fits'))
+    local_psf = '{}{}.psf.fits'.format(expnum, header[_CCD].split('d')[1])
+    local_file_path = '{}/{}'.format(_STAMPS_DIR, local_psf)
+    storage.copy(ossos_psf, local_file_path)
+
+    ratio = 0
+    while ratio < 0.97:
+        data_str, ratio = find_best_mag(asteroid_id, bkg, mag_min, data_ast, fwhm, local_file_path, local_psf)
+        mag_min += step
+        os.unlink(local_psf)
+
+    os.unlink(local_file_path)
+
+    return data_str
 
 
-def gauss(x, *p):
-    amp, mu, sigma, b = p
-    return amp * np.exp(-(x - mu) ** 2 / (2. * sigma ** 2)) + b
-
-
-def compare_psf(data_str, data_ast, fwhm):
+def find_best_mag(asteroid_id, bkg, mag, data_ast, fwhm, local_file_path, local_psf):
     """
-    Compare psf of asteroid against mean of stars, check if anomaly in wings
-    >> changed data to not normalized nor baseline subtracted
+    Iterate through magnitude values to find best amplitude fit for star psf proflie
     """
+
+    data_str = get_star_data(asteroid_id, bkg, mag, local_file_path, local_psf)
 
     x_ast = range(len(data_ast))
     x_str = range(len(data_str))
@@ -337,45 +305,147 @@ def compare_psf(data_str, data_ast, fwhm):
     y_str = lambda x: np.interp(x, x_str_shift, data_str)
     data_str_at_astpts = y_str(x_ast)
 
-    print ">> Ratio test ast/str"
-    data_str_sig = np.absolute(np.array(data_str_at_astpts)) ** 0.5
-    data_ast_sig = np.absolute(np.array(data_ast)) ** 0.5
-    r = np.divide(data_ast, data_str_at_astpts)
-    r_sig = r * (np.divide(data_ast_sig, data_ast) + np.divide(data_str_sig, data_str_at_astpts))
-    r_sig2 = r * np.sqrt(
-        np.square(np.divide(data_ast_sig, data_ast)) + np.square(np.divide(data_str_sig, data_str_at_astpts)))
+    ast_baseline = np.mean(np.sort(data_ast)[:6])
+    str_baseline = np.mean(np.sort(data_str_at_astpts)[:6])
+    data_str_at_astpts += (ast_baseline - str_baseline)
 
-    print r.compressed()
-    # print np.ma.mean(r), np.ma.mean(np.sort(r)[2:-3])
-    print r_sig, r_sig2
+    ast_amp = np.amax(data_ast) - ast_baseline
+    str_amp = np.amax(data_str) - str_baseline
+    ratio = str_amp / ast_amp
+    print ratio, mag
+
+    return data_str_at_astpts, ratio
+
+
+def sep_phot(exp_data, asteroid_id, ap=10.0):
+    """
+    Measure background of postage stamp and the flux_err of the asteroid
+    """
+
+    data2 = np.ones(exp_data.shape) * exp_data
+    # np.copyto(data2, exp_data)
+    try:
+        bkg = sep.Background(data2)
+    except ValueError:
+        data3 = data2.byteswap(True).newbyteorder()
+        bkg = sep.Background(data3)
+
+    # Directly subtract the background from the data in place
+    bkg.subfrom(data2)
+
+    # calculate the Kron radius for each object, then we perform elliptical aperture photometry within that radius
+    kronrad, krflag = sep.kron_radius(data2, asteroid_id['x_mid'], asteroid_id['y_mid'], asteroid_id['a'],
+                                      asteroid_id['b'], asteroid_id['theta'], ap)
+    flux, fluxerr, flag = sep.sum_ellipse(data2, asteroid_id['x'], asteroid_id['y'], asteroid_id['a'], asteroid_id['b'],
+                                          asteroid_id['theta'], 2.5 * kronrad, subpix=1, err=bkg.globalrms)
+
+    return bkg.globalback, flux, fluxerr
+
+
+def get_star_data(asteroid_id, bkg, mag, local_file_path, local_psf):
+    """
+    From ossos psf fitted image, calculate line profile
+    """
+
+    # pvwcs = wcs.WCS(header)
+    # x, y = pvwcs.sky2xy(asteroid_id['ra'].values, asteroid_id['dec'].values)
+    x = asteroid_id['x_mid'].values[0]
+    y = asteroid_id['y_mid'].values[0]
+
+
+
+    # run seepsf on the mean psf image
+    iraf.set(uparm="./")
+    iraf.digiphot(_doprint=0)
+    iraf.apphot(_doprint=0)
+    iraf.daophot(_doprint=0)
+    iraf.seepsf(local_file_path, local_psf, xpsf=x, ypsf=y, magnitude=mag)
+
+    with fits.open(local_psf) as hdulist:
+        data = hdulist[0].data
+
+    th = math.degrees(asteroid_id['theta'].values[0])
+    data_rot = rotate(data, th)
+    data_rot = np.ma.masked_where(data_rot == 0, data_rot)
+
+    # add in background value of exposure instead of subtracting it from the asteroid PSF
+    data_rot += bkg
+
+    data_mean = np.ma.mean(data_rot, axis=1)
+
+    return data_mean[np.nonzero(np.ma.fix_invalid(data_mean, fill_value=0))[0]]
+
+
+def gauss(x, *p):
+    amp, mu, sigma, b = p
+    return amp * np.exp(-(x - mu) ** 2 / (2. * sigma ** 2)) + b
+
+
+def build_comet_psf(data_str):
+    x_str = range(len(data_str))
+
+    multiple = []
+    step = 0.25
+    for x in range(0, int(len(x_str) / 4)):
+        multiple.append(1 + step * x)
+
+    mult_arr = []
+    for item in multiple:
+        mult_arr.append(item)
+    for item in multiple[::-1]:
+        mult_arr.append(item)
+    for item in multiple:
+        mult_arr.append(item)
+    for item in multiple[::-1]:
+        mult_arr.append(item)
+
+    if len(mult_arr) != len(data_str):
+        mult_arr.append(1)
+
+    amp = np.amax(data_str) - np.amin(data_str)
+
+    return np.add(data_str, np.multiply(amp / 2, mult_arr))
+
+
+def compare_psf(star_psf, ast_psf):
+    """
+    Compare psf of asteroid against mean of stars, check if anomaly in wings
+    >> changed data to not normalized nor baseline subtracted
+    """
+
+    x_ast = range(len(ast_psf))
+
+    two_sample = ttest_ind(ast_psf, star_psf)
+    print two_sample
+
+    print ">> Ratio test ast/str"
+    star_psf_sig = np.sqrt(np.absolute(star_psf))
+    ast_psf_sig = np.sqrt(np.absolute(ast_psf))
+    r = np.divide(ast_psf, star_psf)
+    # r_sig = r * (np.divide(ast_psf_sig, ast_psf) + np.divide(star_psf_sig, star_psf))
+    r_sig2 = r * np.sqrt((np.divide(ast_psf_sig, ast_psf) ** 2 + np.divide(star_psf_sig, star_psf) ** 2))
+
+    print r
+    print r_sig2
+    print np.ma.mean(r), np.ma.mean(np.sort(r)[2:-3])
     print '>> (r - r_mean) / r_sig'
-    ratio = (abs(r) - np.ma.mean(np.sort(r)[2:-3])) / r_sig2
+    ratio = (r - np.ma.mean(np.sort(r)[2:-3])) / r_sig2
     print ratio
 
-    # normalize the star PSF to the height of the asteroid PSF
-    ast_baseline = np.mean(np.sort(data_ast)[:8])
-    str_baseline = np.mean(np.sort(data_str)[:8])
-    data_str_norm = np.multiply(data_str_at_astpts,
-                                np.amax(data_ast - ast_baseline) / np.amax(data_str_at_astpts - str_baseline))
-    data_str_like_ast = data_str_norm + ast_baseline - np.mean(np.sort(data_str_norm)[:8])
-    '''
-    df = pd.DataFrame({'Asteroid': data_ast, 'Star': data_str_like_ast})
     with sns.axes_style('ticks'):
-        latexify()
-        ax = df.plot(style='k--')
-        ax.set_xlabel("Pixels")
-        ax.set_ylabel("Mean Flux")
-        # plt.tight_layout()
-        # plt.savefig("../files/image1.pdf")
-        plt.show()
-    '''
-
-    with sns.axes_style('ticks'):
-        latexify()
-        plt.plot(x_ast, data_ast, label='Asteroid', ls='-')
-        plt.plot(x_ast, data_str_like_ast, label='Stellar Model', ls=':')
+        # latexify()
+        plt.plot(x_ast, ast_psf, label='Asteroid', ls='-')
+        plt.plot(x_ast, star_psf, label='Stellar Model', ls='--')
         plt.xlabel('Pixels')
         plt.ylabel('Mean Flux')
+        plt.legend()
+        plt.show()
+
+    with sns.axes_style('ticks'):
+        # latexify()
+        plt.plot(x_ast, r, label='r', ls='-')
+        plt.plot(x_ast, np.ones(len(x_ast)) * np.ma.mean(np.sort(r)[2:-3]) + r_sig2, label='rmean+rsig2 Model', ls='--')
+        plt.plot(x_ast, np.ones(len(x_ast)) * np.ma.mean(np.sort(r)[2:-3]), label='rmean', ls=':')
         plt.legend()
         plt.show()
 
@@ -442,11 +512,11 @@ def latexify(fig_width=None, fig_height=None, columns=1):
         golden_mean = (math.sqrt(5) - 1.0) / 2.0  # Aesthetic ratio
         fig_height = fig_width * golden_mean  # height in inches
 
-    MAX_HEIGHT_INCHES = 8.0
-    if fig_height > MAX_HEIGHT_INCHES:
+    max_height_inches = 8.0
+    if fig_height > max_height_inches:
         print("WARNING: fig_height too large:" + fig_height +
-              "so will reduce to" + MAX_HEIGHT_INCHES + "inches.")
-        fig_height = MAX_HEIGHT_INCHES
+              "so will reduce to" + max_height_inches + "inches.")
+        fig_height = max_height_inches
 
     params = {'backend': 'ps',
               'text.latex.preamble': ['\usepackage{gensymb}'],
@@ -462,23 +532,6 @@ def latexify(fig_width=None, fig_height=None, columns=1):
               }
 
     matplotlib.rcParams.update(params)
-
-
-def format_axes(ax):
-    for spine in ['top', 'right']:
-        ax.spines[spine].set_visible(False)
-
-    for spine in ['left', 'bottom']:
-        ax.spines[spine].set_color(SPINE_COLOR)
-        ax.spines[spine].set_linewidth(0.5)
-
-    ax.xaxis.set_ticks_position('bottom')
-    ax.yaxis.set_ticks_position('left')
-
-    for axis in [ax.xaxis, ax.yaxis]:
-        axis.set_tick_params(direction='out', color=SPINE_COLOR)
-
-    return ax
 
 
 if __name__ == '__main__':
