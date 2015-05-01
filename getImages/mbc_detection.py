@@ -1,5 +1,24 @@
 __author__ = 'kw'
 
+"""
+Detects the deviation of an asteroid's PSF profile from a stellar model PSF profile
+
+- Reads in the SEP ouput for the asteroid from a text file in _PHOT_DIR
+- Pulls the postage stamp of the asteroid from VOSpace and reads in fits header and data
+- Pulls the stellar model PSF data from VOSpace for the exposure
+    - if no PSF, stop and write object name and expnum to a file _OUTPUT_NO_MKPSF
+- If the object is too bright, <18.6 mag, stop and write object name and expnum to a file _OUTPUT_TOO_BRIGHT
+    - this is becase the PSF is saturated
+- Pulls the file with the fwhm value for the exposure from VOSpace
+- Preform photometry on the postage stamp to get background value and flux/fluxerr of the asteroid
+- Calculates the asteroid PSF profile in get_asteroid_data
+- Calculates the stellar model PSF profile in build_star_psf
+- Creates a fake comet psf from the stellar model PSF profile
+    - to use instead of asteroid profile in the comparison, specify test = True
+- Compares the asteroid PSF profile to the stellar model PSF profile and checks for data points which deviate
+  from the mean by more than 3,4,5 sigma
+"""
+
 activate_this = '/Users/admin/Desktop/MainBeltComets/bin/activate_this.py'
 execfile(activate_this, dict(__file__=activate_this))
 import pandas as pd
@@ -45,19 +64,21 @@ _YMAX_HEADER = 'ymax'
 _XMID_HEADER = 'x_mid'
 _YMID_HEADER = 'y_mid'
 _THETA_HEADER = 'theta'
+_A_HEADER = 'a'
+_B_HEADER = 'b'
 
 _INPUT_HEADERS = [_OBJECT_HEADER, _EXPNUM_HEADER, 'p_ra', 'p_dec', 'ra', 'dec', 'p_x', 'p_y', 'x', 'y', _XMID_HEADER,
-                  _YMID_HEADER, _XMIN_HEADER, _XMAX_HEADER, _YMIN_HEADER, _YMAX_HEADER, 'a', 'b', _THETA_HEADER, 'p_f',
-                  'f', 'consistent_f', 'p_mag', _MAG_HEADER, 'flux', 'consistent_mag', 'date_time']
+                  _YMID_HEADER, _XMIN_HEADER, _XMAX_HEADER, _YMIN_HEADER, _YMAX_HEADER, _A_HEADER, _B_HEADER,
+                  _THETA_HEADER, 'p_f', 'f', 'consistent_f', 'p_mag', _MAG_HEADER, 'flux', 'consistent_mag',
+                  'date_time']
 
-_BUFFER1 = 2.5  # aperture of asteroid is this * the fwhm.
-_BUFFER2 = 30.  # the size of the cutout of the asteroid before rotation.
+_BUFFER1 = 1.5  # aperture of asteroid is this * the fwhm.
+_BUFFER2 = 20.  # the size of the cutout of the asteroid before rotation.
+SPINE_COLOR = 'gray'  # for latexifcation
 
 _OUTPUT_NO_MKPSF = 'no_image_psf.txt'.format(_DIR_PATH_BASE)
 _OUTPUT_TOO_BRIGHT = 'too_bright.txt'.format(_DIR_PATH_BASE)
 _INPUT_FILE = 'output.txt'
-
-SPINE_COLOR = 'gray'
 
 '''
 headers in {}_output:
@@ -82,37 +103,42 @@ def main():
                         action='store',
                         default=None,
                         help='The expsure in which the object is being identified.')
+    parser.add_argument("--test",
+                        action='store',
+                        default=False,
+                        help='Use a test comet profile.')
 
     args = parser.parse_args()
 
     phot_table = pd.read_table('{}/{}/{}_{}'.format(_PHOT_DIR, args.family, args.family, _INPUT_FILE),
-                               dtype={'object': object}, index_col=False, header=None, sep=' ',
+                               dtype={_OBJECT_HEADER: object}, index_col=False, header=None, sep=' ',
                                names=_INPUT_HEADERS)
 
     if args.object is None:
-        for i in range(3, len(phot_table)):
-            detect_mbc(args.family, phot_table['object'][i], phot_table['expnum'][i], phot_table)
+        for i in range(len(phot_table)):
+            detect_mbc(args.family, phot_table[_OBJECT_HEADER][i], phot_table[_EXPNUM_HEADER][i], phot_table, args.test)
             print '\n'
 
     elif args.expnum is None:
         object_table = phot_table.query('object == "{}"'.format(args.object))
         object_table.reset_index(drop=True, inplace=True)
         for i in range(len(object_table)):
-            detect_mbc(args.family, args.object, object_table['expnum'][i], object_table)
+            detect_mbc(args.family, args.object, object_table[_EXPNUM_HEADER][i], object_table, args.test)
             print '\n'
     else:
-        detect_mbc(args.family, args.object, args.expnum, phot_table)
+        detect_mbc(args.family, args.object, args.expnum, phot_table, args.test)
 
 
-def detect_mbc(family_name, object_name, expnum, phot_table):
+def detect_mbc(family_name, object_name, expnum, phot_table, test):
     """
     Compare psf of asteroid with mean of stars to detect possible activity
     """
 
     # read in asteroid identification values from the photometry output
-    asteroid_id = phot_table.query('object == "{}" & expnum == "{}"'.format(object_name, expnum))
+    asteroid_id = phot_table.query(
+        '{} == "{}" & {} == "{}"'.format(_OBJECT_HEADER, object_name, _EXPNUM_HEADER, expnum))
     print asteroid_id
-    assert len(asteroid_id) == 1, 'Multiple object identified'
+    assert len(asteroid_id) == 1, 'No object or multiple objects identified'
 
     # read in postage stamp header and data, do photometry to measure background (needed for saturation check)
     header, exp_data, fits_file = fits_data(object_name, expnum, family_name)
@@ -123,15 +149,8 @@ def detect_mbc(family_name, object_name, expnum, phot_table):
         write_no_mkpsf(family_name, '{} {}'.format(expnum.strip('p'), header[_CCD].split('d')[1]))
         return
 
-    '''
-    target = header[_TARGET]
-    if 'BH' not in target:
-        print '-- NOT in H Block'
-    return
-    '''
-
     # reject any object too bright that will definetly be saturated
-    mag = asteroid_id['mag'].values[0]
+    mag = asteroid_id[_MAG_HEADER].values[0]
     if mag < 18.5:
         print '>> Object is too bright for accurate photometry'
         write_too_bright(family_name, asteroid_id)
@@ -141,18 +160,23 @@ def detect_mbc(family_name, object_name, expnum, phot_table):
     fwhm = storage.get_fwhm(expnum.strip('p'), header[_CCD].split('d')[1])
     bkg, flux, fluxerr = sep_phot(exp_data, asteroid_id)
 
-    ast_sky_psf = get_asteroid_data(asteroid_id, exp_data, fwhm, family_name)
+    ast_sky_psf = build_ast_profile(asteroid_id, exp_data, fwhm, family_name)
     ast_psf = np.subtract(ast_sky_psf, bkg)
-    star_psf = build_star_psf(ast_psf, expnum, header, asteroid_id, fwhm, flux, fluxerr)
+    star_psf = build_star_profile(ast_psf, expnum, header, asteroid_id, fwhm, flux, fluxerr)
 
-    comet_psf = build_comet_psf(star_psf, fwhm)
-    # jet_psf = build_jet_psf(star_psf)
+    if test is not False:
+        # jet_psf = build_jet_psf(star_psf)
+        comet_psf = build_comet_psf(star_psf, fwhm)
+        detection, sig = compare_psf(star_psf, comet_psf, comet_psf)
+        if detection:
+            print '>> Detect possible comae <<'
 
-    print '-- Comparing PSFs'
-    detection, sig = compare_psf(star_psf, ast_psf, ast_sky_psf)
-    if detection:
-        print '>> Detect possible comae <<'
-        write_to_file(asteroid_id, family_name, sig)
+    else:
+        print '-- Comparing PSFs'
+        detection, sig = compare_psf(star_psf, ast_psf, ast_sky_psf)
+        if detection:
+            print '>> Detect possible comae <<'
+            write_to_file(asteroid_id, family_name, sig)
 
 
 def fits_data(object_name, expnum, family_name):
@@ -200,15 +224,17 @@ def sep_phot(exp_data, asteroid_id, ap=10.0):
     bkg.subfrom(data2)
 
     # calculate the Kron radius for each object, then we perform elliptical aperture photometry within that radius
-    kronrad, krflag = sep.kron_radius(data2, asteroid_id['x_mid'], asteroid_id['y_mid'], asteroid_id['a'],
-                                      asteroid_id['b'], asteroid_id['theta'], ap)
-    flux, fluxerr, flag = sep.sum_ellipse(data2, asteroid_id['x'], asteroid_id['y'], asteroid_id['a'], asteroid_id['b'],
-                                          asteroid_id['theta'], 2.5 * kronrad, subpix=1, err=bkg.globalrms)
+    kronrad, krflag = sep.kron_radius(data2, asteroid_id[_XMID_HEADER], asteroid_id[_YMID_HEADER],
+                                      asteroid_id[_A_HEADER],
+                                      asteroid_id['b'], asteroid_id[_THETA_HEADER], ap)
+    flux, fluxerr, flag = sep.sum_ellipse(data2, asteroid_id[_XMID_HEADER], asteroid_id[_YMID_HEADER],
+                                          asteroid_id[_A_HEADER], asteroid_id[_B_HEADER],
+                                          asteroid_id[_THETA_HEADER], 2.5 * kronrad, subpix=1, err=bkg.globalrms)
 
     return bkg.globalback, flux, fluxerr
 
 
-def get_asteroid_data(object_data, data, fwhm, family_name):
+def build_ast_profile(object_data, data, fwhm, family_name):
     """
     Calculate psf of asteroid, taking into acount trailing effect
     Cut a square around the polygon of the object, remove saturated rows, rotate so that the ellipse is parallel to the
@@ -216,10 +242,10 @@ def get_asteroid_data(object_data, data, fwhm, family_name):
     """
 
     # define parameters of the square to cut out from the polygon around the elongated object
-    x_min = int(object_data['xmin'].values[0] - _BUFFER2)
-    x_max = int(object_data['xmax'].values[0] + _BUFFER2)
-    y_min = int(object_data['ymin'].values[0] - _BUFFER2)
-    y_max = int(object_data['ymax'].values[0] + _BUFFER2)
+    x_min = int(object_data[_XMIN_HEADER].values[0] - _BUFFER2)
+    x_max = int(object_data[_XMAX_HEADER].values[0] + _BUFFER2)
+    y_min = int(object_data[_YMIN_HEADER].values[0] - _BUFFER2)
+    y_max = int(object_data[_YMAX_HEADER].values[0] + _BUFFER2)
 
     # ensure that you are selecting data that is on the CCD
     data_y_max, data_x_max = data.shape
@@ -236,11 +262,11 @@ def get_asteroid_data(object_data, data, fwhm, family_name):
     np.copyto(data_obj, data[y_min:y_max, x_min:x_max])
 
     # rotate the data about the angle of elongation, semi major axis is along x as reading out rows (not columns)
-    data_rot = rotate(data_obj, math.degrees(object_data['theta'].values[0]))
+    data_rot = rotate(data_obj, math.degrees(object_data[_THETA_HEADER].values[0]))
 
     # cut out a circular aperture around the object
-    a = 0.5 * math.sqrt((object_data['xmax'].values[0] - object_data['xmin'].values[0]) ** 2 +
-                        (object_data['ymax'].values[0] - object_data['ymin'].values[0]) ** 2)
+    a = 0.5 * math.sqrt((object_data[_XMAX_HEADER].values[0] - object_data[_XMIN_HEADER].values[0]) ** 2 +
+                        (object_data[_YMAX_HEADER].values[0] - object_data[_YMIN_HEADER].values[0]) ** 2)
     ell_buffer = _BUFFER1 * fwhm
     cy, cx = np.divide(data_rot.shape, 2)
 
@@ -264,12 +290,11 @@ def get_asteroid_data(object_data, data, fwhm, family_name):
             mask2[y][x] = 1
 
     data_cutout = np.ma.array(data_rot, mask=mask)
-    '''
-    hdu = fits.PrimaryHDU()
-    hdu.data = np.multiply(data_rot, mask2)
-    hdu.writeto('psf_output/{}/cutout_{}_{}.fits'.format(family_name, object_data['object'].values[0],
-                                                         object_data['expnum'].values[0]), clobber=True)
-    '''
+
+    # hdu = fits.PrimaryHDU()
+    #hdu.data = np.multiply(data_rot, mask2)
+    #hdu.writeto('psf_output/{}/cutout_{}_{}.fits'.format(family_name, object_data[_OBJECT_HEADER].values[0],
+    #                                                     object_data[_EXPNUM_HEADER].values[0]), clobber=True)
 
     # take the mean of all the values in each ROW
     data_mean = np.ma.mean(data_cutout, axis=1)
@@ -279,89 +304,14 @@ def get_asteroid_data(object_data, data, fwhm, family_name):
     return data_nonzero
 
 
-def build_star_psf(data_ast, expnum, header, asteroid_id, fwhm, flux, fluxerr):
+def build_star_profile(data_ast, expnum, header, asteroid_id, fwhm, flux, fluxerr):
     """
     Center the star data on the peak of the asteroid psf, and interpolate data points
     """
 
-    mag_max = (-2.5 * np.log10(flux + fluxerr) + header[_ZMAG])[0]
-    mag_min = (-2.5 * np.log10(flux - fluxerr) + header[_ZMAG])[0]
     mag = (-2.5 * np.log10(flux) + header[_ZMAG])[0]
-    step = 0.02
 
-    # calculate mean psf
-    uri = storage.get_uri(expnum.strip('p'), header[_CCD].split('d')[1])
-    ossos_psf = '{}.psf.fits'.format(uri.strip('.fits'))
-    local_psf = '{}{}.psf.fits'.format(expnum, header[_CCD].split('d')[1])
-    local_file_path = '{}/{}'.format(_STAMPS_DIR, local_psf)
-    storage.copy(ossos_psf, local_file_path)
-
-    ratio = 0
-    while not 0.98 < ratio < 1.02:
-        data_str, ratio = find_best_mag(asteroid_id, mag, data_ast, fwhm, local_file_path, local_psf)
-        print ratio, mag
-        print mag, ratio
-        if ratio > 1.02:
-            mag -= step
-        if ratio < 0.98:
-            mag += step
-
-        os.unlink(local_psf)
-
-    if mag_min < mag < mag_max:
-        print '-- In bounds of flux error'
-    else:
-        print '-- NOT in bounds of flux error'
-
-    os.unlink(local_file_path)
-
-    return data_str
-
-
-def optimize_shape(x, *p):
-    mag = p
-
-    x = asteroid_id['x_mid'].values[0]
-    y = asteroid_id['y_mid'].values[0]
-
-    # run seepsf on the mean psf image
-    iraf.set(uparm="./")
-    iraf.digiphot(_doprint=0)
-    iraf.apphot(_doprint=0)
-    iraf.daophot(_doprint=0)
-    iraf.seepsf(local_file_path, local_psf, xpsf=x, ypsf=y, magnitude=mag)
-
-    with fits.open(local_psf) as hdulist:
-        data = hdulist[0].data
-
-    th = math.degrees(asteroid_id['theta'].values[0])
-    data_rot = rotate(data, th)
-    data_rot = np.ma.masked_where(data_rot == 0, data_rot)
-
-    data_mean = np.ma.mean(data_rot, axis=1)
-
-    data_str = data_mean[np.nonzero(np.ma.fix_invalid(data_mean, fill_value=0))[0]]
-
-    # fit a gaussian to the asteroid psf and then the star psf, will shift from fit peak x-value
-    fitp_ast, fitco_ast = curve_fit(gauss, x_ast, data_ast, p_ast)
-    fitp_str, fitco_str = curve_fit(gauss, x_str, data_str, p_str)
-    gauss_shift = fitp_str[1] - fitp_ast[1]
-
-    x_str_shift = np.subtract(x_str, gauss_shift)
-
-    # interpolate the psf values of the star at the x values that there is data for the asteroid psf
-    y_str = lambda x: np.interp(x, x_str_shift, data_str)
-    data_str_at_astpts = y_str(x_ast)
-
-    return data_str_at_astpts
-
-
-def find_best_mag(asteroid_id, mag, data_ast, fwhm, local_file_path, local_psf):
-    """
-    Iterate through magnitude values to find best amplitude fit for star psf proflie based on the ratio of each data point
-    """
-
-    data_str = get_star_data(asteroid_id, mag, local_file_path, local_psf)
+    data_str = get_star_data(asteroid_id, mag, expnum, header)
 
     x_ast = range(len(data_ast))
     x_str = range(len(data_str))
@@ -374,28 +324,32 @@ def find_best_mag(asteroid_id, mag, data_ast, fwhm, local_file_path, local_psf):
         fitp_ast, fitco_ast = curve_fit(gauss, x_ast, data_ast, p_ast)
         fitp_str, fitco_str = curve_fit(gauss, x_str, data_str, p_str)
         gauss_shift = fitp_str[1] - fitp_ast[1]
-    except RuntimeError:
+    except RuntimeError:  # if gaussian fit cannot be obtained in 100 iterations
         gauss_shift = np.argmax(data_str) - np.argmax(data_ast)
-    x_str_shift = np.subtract(x_str, gauss_shift)
 
     # interpolate the psf values of the star at the x values that there is data for the asteroid psf
-    y_str = lambda x: np.interp(x, x_str_shift, data_str)
+    y_str = lambda x: np.interp(x, np.subtract(x_str, gauss_shift), data_str)
     data_str_at_astpts = y_str(x_ast)
 
-    max_str = np.argmax(data_str_at_astpts)
-
-    return data_str_at_astpts, np.mean(np.divide(data_ast[max_str - 1:max_str + 1], data_str_at_astpts[max_str - 1:max_str + 1]))
+    return data_str_at_astpts
 
 
-def get_star_data(asteroid_id, mag, local_file_path, local_psf):
+def get_star_data(asteroid_id, mag, expnum, header):
     """
-    From ossos psf fitted image, calculate mean of the flux of each row of the rotated psf
+    From ossos psf fitted image, calculate mean of the flux of each row of the rotated PSF
     """
+
+    # calculate mean psf
+    uri = storage.get_uri(expnum.strip('p'), header[_CCD].split('d')[1])
+    ossos_psf = '{}.psf.fits'.format(uri.strip('.fits'))
+    local_psf = '{}{}.psf.fits'.format(expnum, header[_CCD].split('d')[1])
+    local_file_path = '{}/{}'.format(_STAMPS_DIR, local_psf)
+    storage.copy(ossos_psf, local_file_path)
 
     # pvwcs = wcs.WCS(header)
     # x, y = pvwcs.sky2xy(asteroid_id['ra'].values, asteroid_id['dec'].values)
-    x = asteroid_id['x_mid'].values[0]
-    y = asteroid_id['y_mid'].values[0]
+    x = asteroid_id[_XMID_HEADER].values[0]
+    y = asteroid_id[_YMID_HEADER].values[0]
 
     # run seepsf on the mean psf image
     iraf.set(uparm="./")
@@ -407,11 +361,14 @@ def get_star_data(asteroid_id, mag, local_file_path, local_psf):
     with fits.open(local_psf) as hdulist:
         data = hdulist[0].data
 
-    th = math.degrees(asteroid_id['theta'].values[0])
+    th = math.degrees(asteroid_id[_THETA_HEADER].values[0])
     data_rot = rotate(data, th)
     data_rot = np.ma.masked_where(data_rot == 0, data_rot)
 
     data_mean = np.ma.mean(data_rot, axis=1)
+
+    os.unlink(local_psf)
+    os.unlink(local_file_path)
 
     return data_mean[np.nonzero(np.ma.fix_invalid(data_mean, fill_value=0))[0]]
 
@@ -424,16 +381,12 @@ def compare_psf(star_psf, ast_psf, ast_sky_psf):
 
     x_ast = range(len(ast_psf))
 
-    two_sample = ttest_ind(ast_psf, star_psf)
-    print two_sample
-
-    print ">> Ratio test ast/str"
-    star_psf_sig = np.sqrt(np.absolute(star_psf))
+    # star_psf_sig = np.sqrt(np.absolute(star_psf))
+    star_psf_sig = 0  # Assume uncertainty on the stellar model is zero
     ast_psf_sig = np.sqrt(np.absolute(ast_sky_psf))
     r = np.divide(ast_psf, star_psf)
-    # r_sig = r * (np.divide(ast_psf_sig, ast_psf) + np.divide(star_psf_sig, star_psf))
     r_sig2 = r * np.sqrt((np.divide(ast_psf_sig, ast_psf) ** 2 + np.divide(star_psf_sig, star_psf) ** 2))
-    r_mean = np.ma.mean(np.sort(r)[2:-3])
+    r_mean = np.ma.mean(np.sort(r)[4:-5])  # don't include outliers in calculation of the mean
     ratio = (r - r_mean) / r_sig2
 
     print r
@@ -441,21 +394,12 @@ def compare_psf(star_psf, ast_psf, ast_sky_psf):
     print r_mean
     print '>> (r - r_mean) / r_sig'
     print ratio
-    print np.mean(ratio)
 
     with sns.axes_style('ticks'):
         # latexify()
         plt.plot(x_ast, ast_psf, label='Asteroid', ls='-')
         plt.plot(x_ast, star_psf, label='Stellar Model', ls='--')
         plt.ylabel('Mean Flux')
-        plt.legend()
-        plt.show()
-
-    with sns.axes_style('ticks'):
-        # latexify()
-        plt.plot(x_ast, r, label='r', ls='-')
-        plt.plot(x_ast, np.ones(len(x_ast)) * np.ma.mean(np.sort(r)[2:-3]) + r_sig2, label='rmean+rsig2', ls='--')
-        plt.plot(x_ast, np.ones(len(x_ast)) * np.ma.mean(np.sort(r)[2:-3]), label='rmean', ls=':')
         plt.legend()
         plt.show()
 
@@ -471,7 +415,7 @@ def compare_psf(star_psf, ast_psf, ast_sky_psf):
 
 def write_to_file(asteroid_id, family_name, sig):
     with open('{}/{}/abv_{}_sig.txt'.format(_OUTPUT_DIR, family_name, sig), 'a') as outfile:
-        outfile.write('{} {}\n'.format(asteroid_id['object'].values[0], asteroid_id['expnum'].values[0]))
+        outfile.write('{} {}\n'.format(asteroid_id[_OBJECT_HEADER].values[0], asteroid_id[_EXPNUM_HEADER].values[0]))
 
 
 def write_no_mkpsf(family_name, expnum_ccd):
@@ -486,15 +430,15 @@ def write_no_mkpsf(family_name, expnum_ccd):
 
 def write_too_bright(family_name, asteroid_id):
     object_expnum = []
-    asteroid_expnum = '{} {}'.format(asteroid_id['object'].values[0], asteroid_id['expnum'].values[0])
+    asteroid_expnum = '{} {}'.format(asteroid_id[_OBJECT_HEADER].values[0], asteroid_id[_EXPNUM_HEADER].values[0])
     with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_TOO_BRIGHT), 'r') as outfile:
         for line in outfile:
             object_expnum.append('{} {}'.format(line.split(' ')[0], line.split(' ')[0]))
     if asteroid_expnum not in object_expnum:
         with open('{}/{}/{}'.format(_OUTPUT_DIR, family_name, _OUTPUT_TOO_BRIGHT), 'a') as outfile:
             outfile.write(
-                '{} {} {}\n'.format(asteroid_id['object'].values[0], asteroid_id['expnum'].values[0],
-                                    asteroid_id['mag'].values[0]))
+                '{} {} {}\n'.format(asteroid_id[_OBJECT_HEADER].values[0], asteroid_id[_EXPNUM_HEADER].values[0],
+                                    asteroid_id[_MAG_HEADER].values[0]))
 
 
 def latexify(fig_width=None, fig_height=None, columns=1):
@@ -554,14 +498,14 @@ def build_comet_psf(data_str, fwhm):
     x_min = int(c - 1.5 * fwhm)
     x_max = int(c + 1.5 * fwhm + 1)
 
-    L = 2 * 1.5 * fwhm
+    L = 2 * 2 * fwhm
     b = np.mean(np.sort(data_str)[:5])
     A = np.amax(data_str) - b
 
     coma = []
     for x in range(len(data_str)):
         if x_min <= x <= x_max:
-            y = 0.8 * A * np.sin(np.divide(x - x_min, L) * np.pi)
+            y = 0.9 * A * np.sin(np.divide(x - x_min, L) * np.pi)
             if y > (data_str[x] - b):
                 coma.append(y - data_str[x] + b)
             else:
