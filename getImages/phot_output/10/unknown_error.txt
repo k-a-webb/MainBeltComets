@@ -1,0 +1,212 @@
+8839 1691902p  # 'NoneType' object is not iterable
+8839 1691913p  # 'NoneType' object is not iterable
+8839 1691923p  # too many values to unpack
+11115 1691678p  # too many values to unpack
+11115 1691911p  # too many values to unpack
+11115 1692332p  # too many values to unpack
+11972 1686684p  # "Keyword 'PHOTZP' not found."
+11972 1686793p  # "Keyword 'PHOTZP' not found."
+11972 1686860p  # "Keyword 'PHOTZP' not found."
+13322 1631614p  # too many values to unpack
+13322 1631624p  # too many values to unpack
+13753 1625356p  # too many values to unpack
+13753 1625936p  # too many values to unpack
+13753 1630866p  # 'NoneType' object is not iterable
+14077 1645761p  # 'NoneType' object is not iterable
+14077 1645774p  # 'NoneType' object is not iterable
+16093 1728599p  # "Keyword 'PHOTZP' not found."
+20509 1729358p  # 'NoneType' object is not iterable
+20997 1692345p  # "Keyword 'PHOTZP' not found."
+22062 1716956p  # too many values to unpack
+22943 1692341p  # "Keyword 'PHOTZP' not found."
+22943 1715399p  # too many values to unpack
+22943 1715404p  # too many values to unpack
+22943 1728607p  # invalid aperture parameters
+23072 1692349p  # invalid aperture parameters
+23877 1607609p  # 'NoneType' object is not iterable
+23877 1607619p  # 'NoneType' object is not iterable
+24595 1615942p  # invalid aperture parameters
+24595 1616522p  # too many values to unpack
+26609 1635634p  # "Keyword 'PHOTZP' not found."
+26609 1635793p  # "Keyword 'PHOTZP' not found."
+26609 1636038p  # "Keyword 'PHOTZP' not found."
+27433 1671647p  # 'NoneType' object is not iterable
+27433 1671657p  # too many values to unpack
+27433 1672592p  # 'NoneType' object is not iterable
+37135 1692176p  # 'NoneType' object is not iterable
+40242 1635781p  # too many values to unpack
+40242 1636118p  # 'NoneType' object is not iterable
+41012 1691929p  # "Keyword 'PHOTZP' not found."
+41012 1692362p  # "Keyword 'PHOTZP' not found."
+41012 1728599p  # "Keyword 'PHOTZP' not found."
+43214 1607615p  # too many values to unpack
+46519 1729720p  # too many values to unpack
+46736 1741587p  # too many values to unpack
+47123 1736198p  # invalid aperture parameters
+47554 1735249p  # too many values to unpack
+47554 1735265p  # too many values to unpack
+47601 1729275p  # too many values to unpack
+47601 1735065p  # 'NoneType' object is not iterable
+47601 1735077p  # invalid aperture parameters
+49538 1656889p  # too many values to unpack
+49538 1656889p  # too many values to unpack
+49604 1671651p  # too many values to unpack
+49604 1671661p  # 'NoneType' object is not iterable
+51953 1672403p  # too many values to unpack
+52548 1672598p  # too many values to unpack
+60026 1698829p  # too many values to unpack
+63183 1698865p  # too many values to unpack
+63305 1607617p  # 'NoneType' object is not iterable
+63305 1607631p  # too many values to unpack
+67176 1617941p  # too many values to unpack
+68283 1625355p  # 'NoneType' object is not iterable
+75980 1729493p  # too many values to unpack
+83108 1682237p  # too many values to unpack
+83108 1682250p  # too many values to unpack
+84324 1672393p  # too many values to unpack
+84424 1667869p  # 'NoneType' object is not iterable
+86305 1691686p  # 'NoneType' object is not iterable
+86305 1691921p  # too many values to unpack
+88802 1672401p  # 'NoneType' object is not iterable
+91611 1626161p  # too many values to unpack
+91611 1631611p  # too many values to unpack
+91611 1635766p  # too many values to unpack
+91695 1631363p  # invalid aperture parameters
+91695 1635776p  # invalid aperture parameters
+91695 1636134p  # invalid aperture parameters
+92188 1692360p  # "Keyword 'PHOTZP' not found."
+92188 1716712p  # too many values to unpack
+92188 1717114p  # too many values to unpack
+92188 1721436p  # too many values to unpack
+92213 1625660p  # too many values to unpack
+94320 1607624p  # 'NoneType' object is not iterable
+94320 1607625p  # too many values to unpack
+94320 1607626p  # 'NoneType' object is not iterable
+95503 1686687p  # "Keyword 'PHOTZP' not found."
+95538 1728440p  # 'NoneType' object is not iterable
+96575 1635786p  # too many values to unpack
+96604 1729499p  # too many values to unpack
+97443 1729712p  # too many values to unpack
+97675 1645256p  # 'NoneType' object is not iterable
+101903 1692671p  # too many values to unpack
+104752 1667880p  # too many values to unpack
+104752 1681689p  # too many values to unpack
+106234 1691674p  # 'NoneType' object is not iterable
+106234 1691907p  # 'NoneType' object is not iterable
+106234 1692181p  # too many values to unpack
+106234 1698312p  # too many values to unpack
+112990 1778898p  # too many values to unpack
+115471 1735266p  # too many values to unpack
+116333 1681963p  # too many values to unpack
+116333 1682240p  # 'NoneType' object is not iterable
+117598 1756828p  # too many values to unpack
+118402 1716950p  # too many values to unpack
+118402 1721427p  # No data in this HDU.
+118402 1721427p  # No data in this HDU.
+118402 1721437p  # too many values to unpack
+118426 1686793p  # "Keyword 'PHOTZP' not found."
+118426 1686860p  # "Keyword 'PHOTZP' not found."
+118426 1691914p  # too many values to unpack
+118426 1698327p  # too many values to unpack
+118934 1691932p  # "Keyword 'PHOTZP' not found."
+118934 1705891p  # too many values to unpack
+118934 1728590p  # 'NoneType' object is not iterable
+121724 1635634p  # "Keyword 'PHOTZP' not found."
+121724 1636038p  # "Keyword 'PHOTZP' not found."
+121773 1631362p  # too many values to unpack
+133327 1735253p  # too many values to unpack
+133327 1735269p  # too many values to unpack
+133327 1736561p  # too many values to unpack
+133327 1736590p  # too many values to unpack
+134091 1729024p  # too many values to unpack
+152260 1715888p  # too many values to unpack
+152260 1721619p  # too many values to unpack
+152260 1728436p  # too many values to unpack
+157038 1645007p  # invalid aperture parameters
+158590 1729274p  # too many values to unpack
+158590 1735271p  # 'NoneType' object is not iterable
+163530 1668257p  # too many values to unpack
+181953 1691672p  # too many values to unpack
+181953 1691905p  # 'NoneType' object is not iterable
+181953 1692179p  # too many values to unpack
+184235 1691673p  # too many values to unpack
+184235 1691906p  # too many values to unpack
+184639 1691913p  # too many values to unpack
+184639 1691923p  # too many values to unpack
+184924 1704877p  # too many values to unpack
+184924 1716714p  # too many values to unpack
+186369 1691927p  # "Keyword 'PHOTZP' not found."
+186924 1728436p  # 'NoneType' object is not iterable
+187400 1692347p  # "Keyword 'PHOTZP' not found."
+191489 1752061p  # too many values to unpack
+191999 1729719p  # too many values to unpack
+195978 1742026p  # too many values to unpack
+202368 1646302p  # too many values to unpack
+212903 1778499p  # 'NoneType' object is not iterable
+224977 1607624p  # too many values to unpack
+224977 1607625p  # too many values to unpack
+224977 1607626p  # too many values to unpack
+226491 1734912p  # too many values to unpack
+228966 1752077p  # too many values to unpack
+228966 1752079p  # too many values to unpack
+232937 1778892p  # too many values to unpack
+234969 1672404p  # too many values to unpack
+235531 1667551p  # too many values to unpack
+235531 1667551p  # too many values to unpack
+235531 1667900p  # <urlopen error [Errno 60] Operation timed out>
+236803 1658160p  # <urlopen error [Errno 60] Operation timed out>
+236803 1667553p  # <urlopen error [Errno 60] Operation timed out>
+236889 1672400p  # too many values to unpack
+237229 1651341p  # too many values to unpack
+237229 1651352p  # 'NoneType' object is not iterable
+237229 1651496p  # 'NoneType' object is not iterable
+249328 1672597p  # 'NoneType' object is not iterable
+254239 1691924p  # "Keyword 'PHOTZP' not found."
+254239 1692357p  # "Keyword 'PHOTZP' not found."
+260291 1635434p  # too many values to unpack
+261761 1635429p  # too many values to unpack
+264006 1631361p  # too many values to unpack
+264106 1616944p  # 'NoneType' object is not iterable
+264389 1735068p  # 'NoneType' object is not iterable
+264389 1736162p  # 'NoneType' object is not iterable
+264389 1736199p  # 'NoneType' object is not iterable
+265922 1778898p  # too many values to unpack
+265967 1734912p  # too many values to unpack
+265967 1736290p  # too many values to unpack
+266641 1734908p  # 'NoneType' object is not iterable
+266722 1625360p  # too many values to unpack
+272013 1645235p  # too many values to unpack
+291222 1617721p  # 'NoneType' object is not iterable
+291222 1617722p  # too many values to unpack
+293350 1631610p  # too many values to unpack
+293350 1631620p  # too many values to unpack
+295183 1692341p  # "Keyword 'PHOTZP' not found."
+295183 1692342p  # "Keyword 'PHOTZP' not found."
+295216 1692345p  # "Keyword 'PHOTZP' not found."
+295519 1778899p  # 'NoneType' object is not iterable
+295918 1672597p  # 'NoneType' object is not iterable
+308537 1691929p  # "Keyword 'PHOTZP' not found."
+308537 1692362p  # "Keyword 'PHOTZP' not found."
+308579 1705922p  # too many values to unpack
+308579 1728599p  # "Keyword 'PHOTZP' not found."
+309131 1728411p  # too many values to unpack
+311976 1607609p  # 'NoneType' object is not iterable
+311976 1607619p  # too many values to unpack
+314524 1630543p  # too many values to unpack
+330195 1722731p  # 'NoneType' object is not iterable
+330195 1729020p  # 'NoneType' object is not iterable
+355245 1631661p  # invalid aperture parameters
+355245 1635437p  # 'NoneType' object is not iterable
+355695 1728435p  # 'NoneType' object is not iterable
+365692 1617937p  # too many values to unpack
+367425 1752198p  # 'NoneType' object is not iterable
+367870 1778896p  # 'NoneType' object is not iterable
+371289 1775279p  # 'NoneType' object is not iterable
+371289 1778894p  # need more than 1 value to unpack
+375067 1671672p  # 'NoneType' object is not iterable
+375067 1672401p  # 'NoneType' object is not iterable
+375067 1681848p  # 'NoneType' object is not iterable
+378428 1646295p  # too many values to unpack
+378428 1651191p  # 'NoneType' object is not iterable
+384660 1646303p  # too many values to unpack
+384660 1651192p  # too many values to unpack

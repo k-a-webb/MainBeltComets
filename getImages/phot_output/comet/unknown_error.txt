@@ -1,0 +1,18 @@
+P-2012-F5 1645489p  # No ephem start
+P-2012-F5 1645961p  # No ephem start
+P-2012-F5 1645962p  # No ephem start
+P-2012-F5 1645963p  # No ephem start
+P-2012-F5 1645964p  # No ephem start
+P-2012-F5 1646362p  # No ephem start
+P-2012-F5 1645962p  # too many values to unpack
+P-2012-F5 1645963p  # too many values to unpack
+P-2012-F5 1645964p  # too many values to unpack
+comet 942254p  # 'NoneType' object is not iterable
+comet 942265p  # 'NoneType' object is not iterable
+comet 942274p  # 'NoneType' object is not iterable
+comet 942254p  # No ephem start
+comet 942265p  # No ephem start
+comet 942274p  # No ephem start
+P-2012-F5 1645962p  # too many values to unpack
+P-2012-F5 1645963p  # too many values to unpack
+P-2012-F5 1645964p  # too many values to unpack

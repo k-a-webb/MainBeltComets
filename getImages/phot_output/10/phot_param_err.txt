@@ -1,0 +1,12 @@
+22943 1728607p # invalid aperture parameters
+23072 1692349p # invalid aperture parameters
+24595 1615942p # invalid aperture parameters
+47123 1736198p # invalid aperture parameters
+47601 1735077p # invalid aperture parameters
+91695 1631363p # invalid aperture parameters
+91695 1635776p # invalid aperture parameters
+91695 1636134p # invalid aperture parameters
+118402 1721427p # No data in this HDU.
+118402 1721427p # No data in this HDU.
+157038 1645007p # invalid aperture parameters
+355245 1631661p # invalid aperture parameters
