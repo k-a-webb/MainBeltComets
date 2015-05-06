@@ -1,3 +1,8 @@
+
+getImages/image_lists/*copy.txt
+getImages/phot_output/434/*notes.txt
+getImages/phot_output/434/*retry.txt
+getImages/phot_output/434/*.JPG
 getImages/redo_phot_param.py
 getImages/predicted_f.py
 getImages/phot_output/headers.rtf
