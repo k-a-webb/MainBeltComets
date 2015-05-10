@@ -33,8 +33,6 @@ import math
 import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib
-from scipy.optimize import curve_fit, leastsq
-from scipy.stats import ttest_ind
 import sys
 from pyraf import iraf
 
@@ -46,9 +44,13 @@ from ossos import storage
 _VOS_DIR = 'vos:kawebb/postage_stamps'
 _DIR_PATH_BASE = os.path.dirname(os.path.abspath(__file__))
 _STAMPS_DIR = '{}/postage_stamps'.format(_DIR_PATH_BASE)
+if not os.path.exists(_STAMPS_DIR):
+    os.mkdir(_STAMPS_DIR)
 _OSSOS_PATH_BASE = 'vos:OSSOS/dbimages'
 _PHOT_DIR = '{}/phot_output'.format(_DIR_PATH_BASE)
 _OUTPUT_DIR = '{}/psf_output'.format(_DIR_PATH_BASE)
+if not os.path.exists(_OUTPUT_DIR):
+    os.mkdir(_OUTPUT_DIR)
 
 _CCD = 'EXTNAME'
 _ZMAG = 'PHOTZP'
@@ -79,6 +81,10 @@ SPINE_COLOR = 'gray'  # for latexifcation
 _OUTPUT_NO_MKPSF = 'no_image_psf.txt'.format(_DIR_PATH_BASE)
 _OUTPUT_TOO_BRIGHT = 'too_bright.txt'.format(_DIR_PATH_BASE)
 _INPUT_FILE = 'output.txt'
+if not os.path.exists(_OUTPUT_NO_MKPSF):
+    open(_OUTPUT_NO_MKPSF, 'w').close()
+if not os.path.exists(_OUTPUT_TOO_BRIGHT):
+    open(_OUTPUT_TOO_BRIGHT, 'w').close()
 
 '''
 headers in {}_output:
@@ -110,8 +116,10 @@ def main():
 
     args = parser.parse_args()
 
-    phot_table = pd.read_table('{}/{}/{}_{}'.format(_PHOT_DIR, args.family, args.family, _INPUT_FILE),
-                               dtype={_OBJECT_HEADER: object}, index_col=False, header=None, sep=' ',
+    phot_file_path = '{}/{}/{}_{}'.format(_PHOT_DIR, args.family, args.family, _INPUT_FILE)
+    assert os.path.exists(phot_file_path), 'Phot output file ({}) does not exist'.format(phot_file_path)
+
+    phot_table = pd.read_table(phot_file_path, dtype={_OBJECT_HEADER: object}, index_col=False, header=None, sep=' ',
                                names=_INPUT_HEADERS)
 
     if args.object is None:
@@ -162,10 +170,12 @@ def detect_mbc(family_name, object_name, expnum, phot_table, test):
 
     ast_sky_psf = build_ast_profile(asteroid_id, exp_data, fwhm, family_name)
     ast_psf = np.subtract(ast_sky_psf, bkg)
-    star_psf = build_star_profile(ast_psf, expnum, header, asteroid_id, fwhm, flux, fluxerr)
+    try:
+        star_psf = build_star_profile(ast_psf, expnum, header, asteroid_id, fwhm, flux)
+    except Exception:
+        return
 
     if test is not False:
-        # jet_psf = build_jet_psf(star_psf)
         comet_psf = build_comet_psf(star_psf, fwhm)
         detection, sig = compare_psf(star_psf, comet_psf, comet_psf)
         if detection:
@@ -177,6 +187,8 @@ def detect_mbc(family_name, object_name, expnum, phot_table, test):
         if detection:
             print '>> Detect possible comae <<'
             write_to_file(asteroid_id, family_name, sig)
+        else:
+            write_to_no_detection_file(asteroid_id, family_name)
 
 
 def fits_data(object_name, expnum, family_name):
@@ -189,7 +201,7 @@ def fits_data(object_name, expnum, family_name):
     else:
         vos_dir = '{}/all'.format(_VOS_DIR)
 
-    assert storage.exists(vos_dir)
+    assert storage.exists(vos_dir), 'Vos directory does not exist, or permissions have expired'
     for fits_file in client.listdir(vos_dir):  # images named with convention: object_expnum_RA_DEC.fits
 
         if fits_file.endswith('.fits'):
@@ -291,10 +303,10 @@ def build_ast_profile(object_data, data, fwhm, family_name):
 
     data_cutout = np.ma.array(data_rot, mask=mask)
 
-    # hdu = fits.PrimaryHDU()
-    #hdu.data = np.multiply(data_rot, mask2)
-    #hdu.writeto('psf_output/{}/cutout_{}_{}.fits'.format(family_name, object_data[_OBJECT_HEADER].values[0],
-    #                                                     object_data[_EXPNUM_HEADER].values[0]), clobber=True)
+    hdu = fits.PrimaryHDU()
+    hdu.data = np.multiply(data_rot, mask2)
+    hdu.writeto('psf_output/{}/cutout_{}_{}.fits'.format(family_name, object_data[_OBJECT_HEADER].values[0],
+                                                         object_data[_EXPNUM_HEADER].values[0]), clobber=True)
 
     # take the mean of all the values in each ROW
     data_mean = np.ma.mean(data_cutout, axis=1)
@@ -304,14 +316,18 @@ def build_ast_profile(object_data, data, fwhm, family_name):
     return data_nonzero
 
 
-def build_star_profile(data_ast, expnum, header, asteroid_id, fwhm, flux, fluxerr):
+def build_star_profile(data_ast, expnum, header, asteroid_id, fwhm, flux):
     """
     Center the star data on the peak of the asteroid psf, and interpolate data points
     """
 
     mag = (-2.5 * np.log10(flux) + header[_ZMAG])[0]
 
-    data_str = get_star_data(asteroid_id, mag, expnum, header)
+    try:
+        data_str = get_star_data(asteroid_id, mag, expnum, header)
+    except:
+        print '>> ERROR: Iraf seepsf error'
+        raise Exception
 
     x_ast = range(len(data_ast))
     x_str = range(len(data_str))
@@ -385,15 +401,20 @@ def compare_psf(star_psf, ast_psf, ast_sky_psf):
     star_psf_sig = 0  # Assume uncertainty on the stellar model is zero
     ast_psf_sig = np.sqrt(np.absolute(ast_sky_psf))
     r = np.divide(ast_psf, star_psf)
-    r_sig2 = r * np.sqrt((np.divide(ast_psf_sig, ast_psf) ** 2 + np.divide(star_psf_sig, star_psf) ** 2))
+    r_sig = r * np.sqrt((np.divide(ast_psf_sig, ast_psf) ** 2 + np.divide(star_psf_sig, star_psf) ** 2))
     r_mean = np.ma.mean(np.sort(r)[4:-5])  # don't include outliers in calculation of the mean
-    ratio = (r - r_mean) / r_sig2
+    ratio = (r - r_mean) / r_sig
 
-    print r
-    print r_sig2
-    print r_mean
+    peak = np.argmax(ast_psf)
+    r_mean_peak = np.mean(np.divide(ast_psf[peak - 2: peak + 1], star_psf[peak - 2: peak + 1]))
+    ratio_peak = (r - r_mean_peak) / r_sig
+
+    # print r
+    # print r_sig
+    # print r_mean
     print '>> (r - r_mean) / r_sig'
     print ratio
+    print ratio_peak
 
     with sns.axes_style('ticks'):
         # latexify()
@@ -403,11 +424,11 @@ def compare_psf(star_psf, ast_psf, ast_sky_psf):
         plt.legend()
         plt.show()
 
-    if len(ratio[np.greater_equal(np.absolute(ratio), 5)]) > 2:
+    if len(ratio_peak[np.greater_equal(np.absolute(ratio_peak), 5)]) > 2:
         return True, 5
-    elif len(ratio[np.greater_equal(np.absolute(ratio), 4)]) > 2:
+    elif len(ratio_peak[np.greater_equal(np.absolute(ratio_peak), 4)]) > 2:
         return True, 4
-    elif len(ratio[np.greater_equal(np.absolute(ratio), 3)]) > 2:
+    elif len(ratio_peak[np.greater_equal(np.absolute(ratio_peak), 3)]) > 2:
         return True, 3
     else:
         return False, 0
@@ -415,6 +436,11 @@ def compare_psf(star_psf, ast_psf, ast_sky_psf):
 
 def write_to_file(asteroid_id, family_name, sig):
     with open('{}/{}/abv_{}_sig.txt'.format(_OUTPUT_DIR, family_name, sig), 'a') as outfile:
+        outfile.write('{} {}\n'.format(asteroid_id[_OBJECT_HEADER].values[0], asteroid_id[_EXPNUM_HEADER].values[0]))
+
+
+def write_to_no_detection_file(asteroid_id, family_name):
+    with open('{}/{}/no_detection.txt'.format(_OUTPUT_DIR, family_name), 'a') as outfile:
         outfile.write('{} {}\n'.format(asteroid_id[_OBJECT_HEADER].values[0], asteroid_id[_EXPNUM_HEADER].values[0]))
 
 
@@ -498,14 +524,14 @@ def build_comet_psf(data_str, fwhm):
     x_min = int(c - 1.5 * fwhm)
     x_max = int(c + 1.5 * fwhm + 1)
 
-    L = 2 * 2 * fwhm
+    length = 2 * 2 * fwhm
     b = np.mean(np.sort(data_str)[:5])
-    A = np.amax(data_str) - b
+    amp = np.amax(data_str) - b
 
     coma = []
     for x in range(len(data_str)):
         if x_min <= x <= x_max:
-            y = 0.9 * A * np.sin(np.divide(x - x_min, L) * np.pi)
+            y = 0.9 * amp * np.sin(np.divide(x - x_min, length) * np.pi)
             if y > (data_str[x] - b):
                 coma.append(y - data_str[x] + b)
             else:
@@ -514,21 +540,6 @@ def build_comet_psf(data_str, fwhm):
             coma.append(0)
 
     return np.add(data_str, coma)
-
-
-def build_jet_psf(data_str):
-    x_str = range(len(data_str))
-
-    multiple = []
-    step = 0.25
-    for x in range(0, int(len(x_str) / 4)):
-        multiple.append(1 + step * x)
-
-    mult_arr = np.append(multiple, multiple[::-1], multiple[::-1], multiple)
-
-    amp = np.amax(data_str) - np.amin(data_str)
-
-    return np.add(data_str, np.multiply(amp / 2, mult_arr))
 
 
 if __name__ == '__main__':
