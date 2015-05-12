@@ -154,6 +154,7 @@ def detect_mbc(family_name, object_name, expnum, phot_table, test):
     # make sure that a mean star psf has been created form the OSSOS pipeline
     if not storage.get_status(expnum.strip('p'), header[_CCD].split('d')[1], 'mkpsf'):
         print '>> PSF does not exist'
+        ast_sky_psf = build_ast_profile(asteroid_id, exp_data, fwhm, family_name) # to build cutout of object
         write_no_mkpsf(family_name, '{} {}'.format(expnum.strip('p'), header[_CCD].split('d')[1]))
         return
 
@@ -161,6 +162,7 @@ def detect_mbc(family_name, object_name, expnum, phot_table, test):
     mag = asteroid_id[_MAG_HEADER].values[0]
     if mag < 18.5:
         print '>> Object is too bright for accurate photometry'
+        ast_sky_psf = build_ast_profile(asteroid_id, exp_data, fwhm, family_name) # to build cutout of object
         write_too_bright(family_name, asteroid_id)
         return
 
@@ -172,18 +174,19 @@ def detect_mbc(family_name, object_name, expnum, phot_table, test):
     ast_psf = np.subtract(ast_sky_psf, bkg)
     try:
         star_psf = build_star_profile(ast_psf, expnum, header, asteroid_id, fwhm, flux)
-    except Exception:
+    except Exception, e:
+        print 'Error calculating star psf: {}'.format(e)
         return
 
     if test is not False:
         comet_psf = build_comet_psf(star_psf, fwhm)
-        detection, sig = compare_psf(star_psf, comet_psf, comet_psf)
+        detection, sig = compare_psf(star_psf, comet_psf, comet_psf, family_name, test)
         if detection:
             print '>> Detect possible comae <<'
 
     else:
         print '-- Comparing PSFs'
-        detection, sig = compare_psf(star_psf, ast_psf, ast_sky_psf)
+        detection, sig = compare_psf(star_psf, ast_psf, ast_sky_psf, family_name, expnum)
         if detection:
             print '>> Detect possible comae <<'
             write_to_file(asteroid_id, family_name, sig)
@@ -405,16 +408,16 @@ def compare_psf(star_psf, ast_psf, ast_sky_psf):
     r_mean = np.ma.mean(np.sort(r)[4:-5])  # don't include outliers in calculation of the mean
     ratio = (r - r_mean) / r_sig
 
-    peak = np.argmax(ast_psf)
-    r_mean_peak = np.mean(np.divide(ast_psf[peak - 2: peak + 1], star_psf[peak - 2: peak + 1]))
-    ratio_peak = (r - r_mean_peak) / r_sig
+    #peak = np.argmax(ast_psf)
+    #r_mean_peak = np.mean(np.divide(ast_psf[peak - 2: peak + 1], star_psf[peak - 2: peak + 1]))
+    #ratio_peak = (r - r_mean_peak) / r_sig
 
     # print r
     # print r_sig
     # print r_mean
     print '>> (r - r_mean) / r_sig'
     print ratio
-    print ratio_peak
+    #print ratio_peak
 
     with sns.axes_style('ticks'):
         # latexify()
@@ -424,11 +427,11 @@ def compare_psf(star_psf, ast_psf, ast_sky_psf):
         plt.legend()
         plt.show()
 
-    if len(ratio_peak[np.greater_equal(np.absolute(ratio_peak), 5)]) > 2:
+    if len(ratio[np.greater_equal(np.absolute(ratio), 5)]) > 2:
         return True, 5
-    elif len(ratio_peak[np.greater_equal(np.absolute(ratio_peak), 4)]) > 2:
+    elif len(ratio[np.greater_equal(np.absolute(ratio), 4)]) > 2:
         return True, 4
-    elif len(ratio_peak[np.greater_equal(np.absolute(ratio_peak), 3)]) > 2:
+    elif len(ratio[np.greater_equal(np.absolute(ratio), 3)]) > 2:
         return True, 3
     else:
         return False, 0
